@@ -40,7 +40,7 @@ const client = new Client({
 });
 
 // --- Chargement des commandes ---
-client.commands = nouvelle Collection();
+client.commands = new Collection();
 const commandsPath = path.join(__dirname, 'commands');
 essayer {
   const commandFiles = fs.readdirSync(commandsPath).filter(f => f.endsWith('.js'));
