@@ -1,9 +1,21 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
+const http = require('http');
 const { Client, GatewayIntentBits, Collection, Events } = require('discord.js');
 const storage = require('./utils/storage');
 const { buildGiveawayEmbed } = require('./commands/creategw');
+
+// --- Petit serveur web ---
+// Render (et d'autres hébergeurs "gratuits") ont besoin que l'app réponde sur un port web
+// pour la considérer comme active. Ce serveur ne sert à rien d'autre que ça.
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Le bot MSP est en ligne ✅');
+}).listen(PORT, () => {
+  console.log(`🌐 Serveur web de statut lancé sur le port ${PORT}`);
+});
 
 const client = new Client({
   intents: [
