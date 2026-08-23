@@ -1,13 +1,13 @@
 require('dotenv').config();
 const fs = require('fs');
-const path = require('path');
+const chemin = require('chemin');
 const http = require('http');
 const { Client, GatewayIntentBits, Collection, Events } = require('discord.js');
 const storage = require('./utils/storage');
 const { buildGiveawayEmbed } = require('./commands/creategw');
 
 // --- Petit serveur web ---
-// Render (et d'autres hébergeurs "gratuits") ont besoin que l'app réponde sur un port web
+// Render (et d'autres hébergeurs "gratuits") ont besoin que l'application réponde sur un port web
 // pour la considérer comme active. Ce serveur ne sert à rien d'autre que ça.
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
@@ -17,184 +17,209 @@ http.createServer((req, res) => {
   console.log(`🌐 Serveur web de statut lancé sur le port ${PORT}`);
 });
 
+// Filets de sécurité : si quelque chose plante ailleurs dans le code,
+// on veut le voir dans les logs plutôt qu'un silence total.
+process.on('uncaughtException', (err) => {
+  console.error('💥 Erreur fatale (uncaughtException) :', err);
+});
+process.on('unhandledRejection', (err) => {
+  console.error('💥 Erreur fatale (rejet non géré) :', err);
+});
+
+console.log('🔧 Vérification des variables d\'environnement...');
+console.log('DISCORD_TOKEN présent :', !!process.env.DISCORD_TOKEN);
+console.log('CLIENT_ID présent :', !!process.env.CLIENT_ID);
+console.log('GUILD_ID présent :', !!process.env.GUILD_ID);
+console.log('BLACKLIST_ROLE_ID présent :', !!process.env.BLACKLIST_ROLE_ID);
+
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers, // nécessaire pour gérer les rôles - active "Server Members Intent" dans le Developer Portal
+  intentions : [
+    GatewayIntentBits.Guildes,
+    GatewayIntentBits.GuildMembers, // nécessaire pour gérer les rôles - actif "Server Members Intent" dans le Developer Portal
   ],
 });
 
 // --- Chargement des commandes ---
-client.commands = new Collection();
+client.commands = nouvelle Collection();
 const commandsPath = path.join(__dirname, 'commands');
-for (const file of fs.readdirSync(commandsPath).filter(f => f.endsWith('.js'))) {
-  const command = require(path.join(commandsPath, file));
-  if (command.data) client.commands.set(command.data.name, command);
+essayer {
+  const commandFiles = fs.readdirSync(commandsPath).filter(f => f.endsWith('.js'));
+  console.log(`📂 ${commandFiles.length} fichier(s) de commande trouvé(s) :`, commandFiles);
+  pour (const fichier de commandFiles) {
+    const commande = require(path.join(commandsPath, fichier));
+    si (commande.data) client.commands.set(commande.data.name, commande);
+  }
+} attraper (erreur) {
+  console.error('💥 Erreur lors du chargement des commandes (dossier "commands" introuvable ou incomplet) :', err);
 }
 
+console.log('🔄 Tentative de connexion à Discord...');
+
 // --- Gestion des interactions (commandes + boutons) ---
-client.on(Events.InteractionCreate, async interaction => {
-  try {
-    if (interaction.isChatInputCommand()) {
-      const command = client.commands.get(interaction.commandName);
-      if (!command) return;
-      await command.execute(interaction);
-      return;
+client.on(Events.InteractionCreate, interaction asynchrone => {
+  essayer {
+    si (interaction.isChatInputCommand()) {
+      const commande = client.commands.get(interaction.commandName);
+      si (!commande) retourner;
+      attendre la commande.execute(interaction);
+      retour;
     }
 
-    if (interaction.isButton() && interaction.customId === 'gw_participate') {
-      await handleGiveawayParticipation(interaction);
-      return;
+    si (interaction.isButton() && interaction.customId === 'gw_participate') {
+      attendre handleGiveawayParticipation(interaction);
+      retour;
     }
-  } catch (err) {
+  } attraper (erreur) {
     console.error(err);
     const errorPayload = { content: "❌ Une erreur est survenue.", ephemeral: true };
-    if (interaction.replied || interaction.deferred) {
+    si (interaction.replied || interaction.deferred) {
       await interaction.followUp(errorPayload).catch(() => {});
-    } else {
-      await interaction.reply(errorPayload).catch(() => {});
+    } autre {
+      attendre interaction.reply(errorPayload).catch(() => {});
     }
   }
 });
 
-async function handleGiveawayParticipation(interaction) {
+fonction asynchrone handleGiveawayParticipation(interaction) {
   const roleId = process.env.BLACKLIST_ROLE_ID;
-  const member = interaction.member;
+  const membre = interaction.membre;
 
   // Vérifie si le membre est blacklisté
-  if (roleId && member.roles.cache.has(roleId)) {
+  si (roleId && member.roles.cache.has(roleId)) {
     const blacklist = storage.getBlacklist();
-    const entry = blacklist.find(e => e.userId === member.id);
-    const dateStr = entry ? `<t:${Math.floor(entry.endTimestamp / 1000)}:F>` : 'une date indéterminée';
-    return interaction.reply({
-      content: `🚫 Tu es actuellement blacklisté des giveaways jusqu'au ${dateStr}.`,
-      ephemeral: true,
+    const entrée = liste noire.find(e => e.userId === membre.id);
+    const dateStr = entrée ? `<t:${Math.floor(entry.endTimestamp / 1000)}:F>` : 'une date indéterminée';
+    retourner interaction.réponse({
+      content: `🚫 Tu es actuellement blacklisté des cadeaux jusqu'au ${dateStr}.`,
+      éphémère : vrai,
     });
   }
 
   const giveaways = storage.getGiveaways();
   const giveaway = giveaways.find(g => g.messageId === interaction.message.id && !g.ended);
 
-  if (!giveaway) {
+  si (!cadeau) {
     return interaction.reply({ content: "Ce giveaway n'est plus disponible.", ephemeral: true });
   }
 
-  if (giveaway.participants.includes(member.id)) {
-    return interaction.reply({ content: "Tu participes déjà à ce giveaway ✅", ephemeral: true });
+  si (giveaway.participants.includes(member.id)) {
+    return interaction.reply({ content: "Tu participes déjà à ce cadeau ✅", ephemeral: true });
   }
 
   giveaway.participants.push(member.id);
-  storage.saveGiveaways(giveaways);
+  stockage.sauvegarderCadeaux(cadeaux);
 
   // Met à jour le compteur de participants dans l'embed
   const embed = buildGiveawayEmbed({
-    prize: giveaway.prize,
-    endTimestamp: giveaway.endTimestamp,
-    winnersCount: giveaway.winnersCount,
-    participantsCount: giveaway.participants.length,
+    prix : giveaway.prize,
+    endTimestamp : giveaway.endTimestamp,
+    nombre de gagnants : giveaway.winnersCount,
+    participantsNombre : giveaway.participants.length,
   });
   await interaction.message.edit({ embeds: [embed] }).catch(() => {});
 
-  return interaction.reply({ content: "🎉 Tu participes bien au giveaway, bonne chance !", ephemeral: true });
+  return interaction.reply({ content: "🎉 Tu participes bien au cadeau, bonne chance !", éphémère : true });
 }
 
 // --- Tirage des gagnants ---
-async function endGiveaway(giveaway) {
+fonction asynchrone endGiveaway(giveaway) {
   const giveaways = storage.getGiveaways();
   const stored = giveaways.find(g => g.messageId === giveaway.messageId);
-  if (!stored || stored.ended) return;
+  si (!stocké || stocké.terminé) retourner;
 
-  stored.ended = true;
+  stocké.terminé = vrai;
 
   // On exclut les membres blacklistés au moment du tirage, par sécurité
   const blacklist = storage.getBlacklist().map(e => e.userId);
-  const eligible = stored.participants.filter(id => !blacklist.includes(id));
+  const éligibles = stocké.participants.filter(id => !blacklist.includes(id));
 
   const shuffled = eligible.sort(() => Math.random() - 0.5);
-  const winners = shuffled.slice(0, stored.winnersCount);
+  const gagnants = shuffled.slice(0, stored.winnersCount);
 
-  storage.saveGiveaways(giveaways);
+  stockage.sauvegarderCadeaux(cadeaux);
 
-  try {
+  essayer {
     const channel = await client.channels.fetch(stored.channelId);
     const message = await channel.messages.fetch(stored.messageId);
 
     const embed = buildGiveawayEmbed({
-      prize: stored.prize,
-      winnersCount: stored.winnersCount,
-      participantsCount: stored.participants.length,
-      ended: true,
-      winners,
+      prix : stocké.prix,
+      gagnantsCount : stocké.winnersCount,
+      participantsNombre : longueur des participants stockée,
+      terminé : vrai,
+      gagnants,
     });
     await message.edit({ embeds: [embed], components: [] });
 
-    if (winners.length) {
+    si (gagnants.longueur) {
       await channel.send(`🎉 Félicitations ${winners.map(id => `<@${id}>`).join(', ')} ! Tu remportes **${stored.prize}** !`);
-    } else {
-      await channel.send(`😢 Aucun participant valide pour le giveaway **${stored.prize}**.`);
+    } autre {
+      wait Channel.send(`😢 Aucun participant valide pour le cadeau **${stored.prize}**.`);
     }
-  } catch (err) {
-    console.error('Erreur lors de la clôture du giveaway :', err);
+  } attraper (erreur) {
+    console.error('Erreur lors de la clôture du cadeau :', err);
   }
 }
 
-// Vérifie toutes les 30 secondes si un giveaway doit se terminer
-function startGiveawayLoop() {
+// Vérifie toutes les 30 secondes si un cadeau doit se terminer
+fonction startGiveawayLoop() {
   setInterval(async () => {
     const giveaways = storage.getGiveaways();
     const toEnd = giveaways.filter(g => !g.ended && g.endTimestamp <= Date.now());
-    for (const g of toEnd) {
-      await endGiveaway(g);
+    pour (const g de toEnd) {
+      attendre finGiveaway(g);
     }
   }, 30 * 1000);
 }
 
-// --- Retrait automatique de la blacklist ---
-async function checkBlacklist() {
+// --- Retrait automatique de la liste noire ---
+fonction asynchrone checkBlacklist() {
   const blacklist = storage.getBlacklist();
-  const now = Date.now();
+  const maintenant = Date.maintenant();
   const stillActive = [];
 
-  for (const entry of blacklist) {
-    if (entry.endTimestamp > now) {
-      stillActive.push(entry);
-      continue;
+  pour (const entrée de la liste noire) {
+    si (entry.endTimestamp > maintenant) {
+      toujoursActif.push(entrée);
+      continuer;
     }
 
-    try {
-      const guild = await client.guilds.fetch(entry.guildId);
-      const member = await guild.members.fetch(entry.userId).catch(() => null);
+    essayer {
+      const guilde = await client.guilds.fetch(entry.guildId);
+      const membre = await guild.members.fetch(entry.userId).catch(() => null);
       const roleId = process.env.BLACKLIST_ROLE_ID;
 
-      if (member && roleId && member.roles.cache.has(roleId)) {
-        await member.roles.remove(roleId, 'Fin de la période de blacklist');
+      si (membre && roleId && membre.roles.cache.has(roleId)) {
+        wait member.roles.remove(roleId, 'Fin de la période de blacklist');
       }
 
       const logChannelId = process.env.LOG_CHANNEL_ID;
-      if (logChannelId) {
-        const logChannel = await client.channels.fetch(logChannelId).catch(() => null);
-        if (logChannel) {
+      si (logChannelId) {
+        const logChannel = wait client.channels.fetch(logChannelId).catch(() => null);
+        si (logChannel) {
           await logChannel.send(`✅ <@${entry.userId}> n'est plus blacklisté des giveaways.`);
         }
       }
-    } catch (err) {
+    } attraper (erreur) {
       console.error('Erreur lors du retrait de blacklist :', err);
     }
   }
 
-  storage.saveBlacklist(stillActive);
+  stockage.saveBlacklist(stillActive);
 }
 
 // Vérifie toutes les 5 minutes les blacklists à retirer
-function startBlacklistLoop() {
-  setInterval(checkBlacklist, 5 * 60 * 1000);
+fonction startBlacklistLoop() {
+  définirIntervalle(vérifierListeNoire, 5 * 60 * 1000);
 }
 
 client.once(Events.ClientReady, c => {
-  console.log(`✅ Connecté en tant que ${c.user.tag}`);
-  checkBlacklist();
-  startBlacklistLoop();
-  startGiveawayLoop();
+  console.log(`✅ Connecté à tant que ${c.user.tag}`);
+  vérifier la liste noire();
+  démarrerBlacklistLoop();
+  démarrerGiveawayLoop();
 });
 
-client.login(process.env.DISCORD_TOKEN);
+client.login(process.env.DISCORD_TOKEN).catch(err => {
+  console.error('💥 Échec de la connexion à Discord :', err.message);
+});
