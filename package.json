@@ -1,0 +1,17 @@
+{
+  "name": "msp-bot",
+  "version": "1.0.0",
+  "description": "Bot Discord pour gérer la blacklist et les giveaways du serveur MSP",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "deploy": "node deploy-commands.js"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^1.0.7",
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.5",
+    "gif-encoder-2": "^1.0.5"
+  }
+}
