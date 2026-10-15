@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, ChannelType } = require('discord.js');
 const storage = require('../utils/storage');
+const bonbons = require('../bonbons-halloween'); // 🎃 bonbons
 
 const DROP_EMOJI = '🎉';
 const COLLECT_DURATION_MS = 24 * 60 * 60 * 1000; // la réaction reste valable 24h
@@ -53,6 +54,7 @@ module.exports = {
     });
 
     collector.on('collect', async (reaction, user) => {
+      bonbons.api.drop(user.id).catch(() => {}); // 🎃 drop attrapé
       const wonEmbed = new EmbedBuilder()
         .setColor(0x95A5A6)
         .setTitle('🎁 Drop remporté !')

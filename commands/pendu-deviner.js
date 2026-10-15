@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const hangman = require('../utils/hangmanGame');
 const { buildStateEmbed } = require('./pendu-creer');
+const bonbons = require('../bonbons-halloween'); // 🎃 bonbons
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -24,6 +25,10 @@ module.exports = {
       return interaction.reply({ content: "⚠️ Merci de proposer une seule lettre (A à Z).", ephemeral: true });
     }
 
+    // 🎃 on retient qui a participé à la partie (pour les bonbons en cas de victoire)
+    if (!game.players) game.players = new Set();
+    game.players.add(interaction.user.id);
+
     const result = hangman.guessLetter(game, letterInput);
 
     if (result.alreadyGuessed) {
@@ -31,6 +36,7 @@ module.exports = {
     }
 
     if (result.won) {
+      for (const pid of game.players) bonbons.api.miniJeu(pid).catch(() => {}); // 🎃 partie de pendu gagnée
       hangman.deleteGame(interaction.channel.id);
       const embed = new EmbedBuilder()
         .setColor(0x2ECC71)
