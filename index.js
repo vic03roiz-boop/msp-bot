@@ -13,6 +13,7 @@ const { buildAdventComponents, buildAdventEmbed, isDayUnlocked } = require('./co
 const { generateWheelGif } = require('./utils/wheelImage');
 const { buildGiveawayEmbed } = require('./commands/creategw');
 const { buildLobbyEmbed } = require('./commands/uno');
+const bonbons = require('./bonbons-halloween'); // 🎃 système bonbons / citrouilles
 
 // --- Petit serveur web ---
 // Render (et d'autres hébergeurs "gratuits") ont besoin que l'app réponde sur un port web
@@ -47,6 +48,8 @@ const client = new Client({
     GatewayIntentBits.GuildMessages, // nécessaire pour l'anti-spam
     GatewayIntentBits.MessageContent, // nécessaire pour lire le texte des messages (ex: transcripts de tickets) - active "Message Content Intent" dans le Developer Portal
     GatewayIntentBits.GuildMessageReactions, // nécessaire pour /drop et le règlement
+    GatewayIntentBits.GuildVoiceStates, // 🎃 bonbons : temps passé en vocal
+    GatewayIntentBits.GuildInvites, // 🎃 bonbons : parrainage (qui a invité qui)
   ],
   // Nécessaire pour que les réactions fonctionnent même sur un message envoyé avant
   // le dernier redémarrage du bot (comme le règlement, qui reste affiché des mois)
@@ -66,6 +69,9 @@ try {
 } catch (err) {
   console.error('💥 Erreur lors du chargement des commandes (dossier "commands" introuvable ou incomplet) :', err);
 }
+
+// 🎃 Système bonbons / citrouilles : ajoute ses commandes à client.commands (donc enregistrées avec les tiennes au démarrage)
+bonbons.init(client, { getGuildConfig: storage.getGuildConfig });
 
 console.log('🔄 Tentative de connexion à Discord...');
 
@@ -270,6 +276,7 @@ async function handleGiveawayParticipation(interaction) {
 
   giveaway.participants.push(member.id);
   storage.saveGiveaways(giveaways);
+  bonbons.api.giveaway(member.id, giveaway.messageId).catch(() => {}); // 🎃 +50 bonbons
 
   // Met à jour le compteur de participants dans l'embed public
   const embed = buildGiveawayEmbed({
@@ -491,6 +498,7 @@ async function handleUnoButton(interaction) {
     }
 
     if (result.winnerId) {
+      for (const pid of game.players) bonbons.api.miniJeu(pid).catch(() => {}); // 🎃 partie de UNO terminée
       uno.deleteGame(interaction.channel.id);
       await interaction.update({ content: `🏆 Bravo, tu as gagné la partie de UNO !`, embeds: [], components: [] });
       await updatePublicUnoMessage(interaction.client, game, { ended: true, winnerId: result.winnerId });
