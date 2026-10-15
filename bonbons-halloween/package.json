@@ -1,0 +1,8 @@
+{
+  "name": "bonbons-halloween",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": { "simulate": "node test/simulate.js" },
+  "dependencies": { "discord.js": "^14.16.0" }
+}
