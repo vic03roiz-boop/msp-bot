@@ -21,8 +21,8 @@ module.exports = {
 
   // --- Calendrier ---
   timezone: 'Europe/Paris',
-  eventStart: env.EVENT_START || '2026-10-16', // premier jour (inclus)
-  eventEnd: env.EVENT_END || '2026-11-30', // dernier jour (inclus) = 46 jours
+  eventStart: env.EVENT_START || '2026-10-17', // premier jour (inclus) : samedi 17 octobre
+  eventEnd: env.EVENT_END || '2026-11-30', // dernier jour (inclus) = 45 jours
 
   // --- Économie ---
   bonbonsParCitrouille: 150,
@@ -57,7 +57,7 @@ module.exports = {
     { id: 'jeu', label: 'mini-jeu ou drop', amount: 15 },
   ],
   dailyValidateAt: 3, // un jour est validé à partir de 3 missions faites
-  streaks: [[3, 50], [7, 100], [14, 250], [30, 450], [46, 650]], // [jours d'affilée, bonbons]
+  streaks: [[3, 50], [7, 100], [14, 250], [30, 450], ['all', 750]], // [jours d'affilée, bonbons] ; 'all' = tous les jours de l'événement
   loyalty: [[10, 100], [20, 200], [30, 300], [40, 400]], // [jours validés au total, bonbons]
   weekly: { msgs: 600, voice: 240, perfect: 7, awards: { msgs: 80, voice: 60, perfect: 110 } },
   finalStretch: { days: 4, msgs: 300, voice: 120, perfect: 4, awards: { msgs: 60, voice: 50, perfect: 90 } },

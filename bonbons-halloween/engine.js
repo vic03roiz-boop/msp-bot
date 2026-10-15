@@ -100,9 +100,10 @@ function evalDaily(u, ctx, gains) {
     u.streak = u.lastValidated === ctx.prevKey ? u.streak + 1 : 1;
     u.lastValidated = ctx.dayKey;
     for (const [days, amount] of cfg.streaks) {
-      if (u.streak >= days && !u.streakAwards.includes(days)) {
+      const need = days === 'all' ? ctx.total : days;
+      if (u.streak >= need && !u.streakAwards.includes(days)) {
         u.streakAwards.push(days);
-        gains.push({ amount, reason: `série de ${days} jours`, category: 'serie' });
+        gains.push({ amount, reason: days === 'all' ? `série complète : ${need} jours d’affilée` : `série de ${need} jours`, category: 'serie' });
       }
     }
     for (const [days, amount] of cfg.loyalty) {
@@ -117,10 +118,13 @@ function evalDaily(u, ctx, gains) {
 function evalWeekly(u, ctx, gains) {
   const w = ctx.weekKey === 'final' ? cfg.finalStretch : cfg.weekly;
   const tag = ctx.weekKey === 'final' ? 'dernière ligne droite' : 'semaine';
+  // une semaine plus courte (fin de l'événement) demande tous ses jours, pas 7
+  const weekLen = ctx.weekKey === 'final' ? cfg.finalStretch.days : Math.min(7, ctx.total - cfg.finalStretch.days - Number(ctx.weekKey.slice(1)) * 7);
+  const perfectNeeded = Math.min(w.perfect, weekLen);
   const checks = [
     ['msgs', u.week.msgs >= w.msgs, `${tag} : ${w.msgs} messages`],
     ['voice', u.week.voiceMin >= w.voice, `${tag} : ${Math.round(w.voice / 60 * 10) / 10} h de vocal`],
-    ['perfect', u.week.validatedDays >= w.perfect, `${tag} parfaite : ${w.perfect} jours validés`],
+    ['perfect', u.week.validatedDays >= perfectNeeded, `${tag} parfaite : ${perfectNeeded} jours validés`],
   ];
   for (const [id, ok, label] of checks) {
     if (ok && !u.week.done.includes(id)) {

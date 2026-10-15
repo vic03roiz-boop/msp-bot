@@ -9,7 +9,8 @@ function run({ msgs, voice, jeu, days }) {
   const tot = {};
   const add = (g) => g.forEach((x) => { tot[x.category] = (tot[x.category] || 0) + x.amount; });
   const start = Date.parse(`${cfg.eventStart}T10:00:00Z`);
-  for (let d = 0; d < 46; d++) {
+  const TOTAL = engine.getCtx(start).total;
+  for (let d = 0; d < TOTAL; d++) {
     if (days && !days(d)) continue;
     const t0 = start + d * 864e5;
     const ctx = engine.getCtx(t0);
@@ -21,11 +22,11 @@ function run({ msgs, voice, jeu, days }) {
   return { u, tot, sum: Object.values(tot).reduce((a, b) => a + b, 0) };
 }
 
-// Membre parfait : 150 msgs, 70 min de vocal, 1 jeu par jour, tous les jours
+// Membre parfait : 150 msgs, 70 min de vocal, 1 jeu par jour, tous les jours (45 jours depuis le 17 octobre)
 const perfect = run({ msgs: 150, voice: 70, jeu: true });
 console.log('Membre parfait :', perfect.tot, 'total', perfect.sum);
-assert.strictEqual(perfect.tot.jour, 4600, 'missions du jour = 4600');
-assert.strictEqual(perfect.tot.serie, 1500, 'séries = 1500');
+assert.strictEqual(perfect.tot.jour, 4500, 'missions du jour = 45 x 100');
+assert.strictEqual(perfect.tot.serie, 1600, 'séries = 1600 (dont 750 pour la série complète)');
 assert.strictEqual(perfect.tot.fidelite, 1000, 'fidélité = 1000');
 assert.strictEqual(perfect.tot.semaine, 1700, 'semaines = 1700');
 assert.strictEqual(perfect.tot.succes, 800, 'succès sans parrainage/giveaway = 800');
@@ -44,7 +45,7 @@ const ctx = engine.getCtx(Date.parse(`${cfg.eventStart}T10:00:00Z`));
 for (let i = 0; i < 100; i++) engine.onMessage(u, 1e12 + i * 100, 10, ctx);
 assert.strictEqual(u.stats.msgs, 1, 'anti-spam 30 s');
 assert.deepStrictEqual(engine.onMessage(u, 10 ** 12, 3, ctx), [], 'messages < 5 caractères ignorés');
-assert.strictEqual(engine.getCtx(Date.parse('2026-10-15T10:00:00Z')), null, 'avant le 16 octobre : pas d’événement');
+assert.strictEqual(engine.getCtx(Date.parse('2026-10-16T10:00:00Z')), null, 'avant le 17 octobre : pas d’événement');
 assert.strictEqual(engine.getCtx(Date.parse('2026-12-01T10:00:00Z')), null, 'après le 30 novembre : pas d’événement');
 
 console.log('OK ✅ tous les contrôles passent');

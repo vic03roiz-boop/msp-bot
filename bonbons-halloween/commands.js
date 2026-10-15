@@ -14,7 +14,7 @@ const staffOnly = PermissionFlagsBits.ManageGuild; // par défaut ; le code rev�
 
 const DEFS = [
   new SlashCommandBuilder().setName('solde').setDescription('Voir ton sac à bonbons, tes missions du jour et ton historique'),
-  new SlashCommandBuilder().setName('recompenses').setDescription('Voir et réclamer les paliers de bonbons'),
+  new SlashCommandBuilder().setName('recompenses').setDescription('Voir et réclamer les paliers de bonbons et la boutique en citrouilles'),
   new SlashCommandBuilder().setName('boutique').setDescription('La Boutique des Citrouilles'),
   new SlashCommandBuilder().setName('autographes').setDescription('Échanger tes bonbons restants contre des autographes (5 bonbons = 1)')
     .addIntegerOption((o) => o.setName('quantite').setDescription('Nombre d’autographes (max 100 au total)').setMinValue(1).setMaxValue(100).setRequired(true)),
@@ -84,11 +84,14 @@ async function handle(i) {
       const stock = p.stockKey && claims.stockLeft(p.stockKey) <= 0 ? ' · **épuisé**' : '';
       return `${mark} **${p.n}.** ${ok(p.cost)} ${theme.bonbon} · ${p.reward}${p.note ? ` _(${p.note})_` : ''}${stock}`;
     });
-    const e = new EmbedBuilder().setColor(theme.color).setTitle(`${theme.citrouille} Les paliers de bonbons`)
-      .setDescription(`${lines.join('\n')}\n\n✅ déjà réclamé · 🎃 disponible · 🔒 pas encore\nTon solde : **${ok(u.balance)}** ${theme.bonbon}. Réclamer un palier retire son coût de ton solde, et chaque palier ne se réclame qu’une fois.`)
+    const e1 = new EmbedBuilder().setColor(theme.color).setTitle(`${theme.bonbon} Les paliers de bonbons`)
+      .setDescription(`${lines.join('\n')}\n\n✅ déjà réclamé · 🎃 disponible · 🔒 pas encore\nRéclamer un palier retire son coût de ton solde, et chaque palier ne se réclame qu’une fois.`);
+    const shop = catalog.SHOP.map((s) => `${s.cit * catalog.CIT <= u.balance ? '🎃' : '🔒'} **${s.name}** · ${s.cit} ${theme.citrouille} (${ok(s.cit * catalog.CIT)} ${theme.bonbon})`);
+    const e2 = new EmbedBuilder().setColor(theme.color).setTitle(`${theme.citrouille} La boutique en citrouilles`)
+      .setDescription(`1 citrouille = ${catalog.CIT} bonbons, converties au moment de l’achat.\n\n${shop.join('\n')}\n\nTon solde : **${ok(u.balance)}** ${theme.bonbon} (${economy.cit(u.balance)} ${theme.citrouille}).`)
       .setFooter({ text: theme.footer });
-    const menu = claims.paliersMenu(u, i.user.id);
-    return i.reply({ embeds: [e], components: menu ? [menu] : [], flags: E });
+    const rows = [claims.paliersMenu(u, i.user.id), claims.shopMenu(u, i.user.id)].filter(Boolean);
+    return i.reply({ embeds: [e1, e2], components: rows, flags: E });
   }
 
   if (name === 'boutique') {

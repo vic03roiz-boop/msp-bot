@@ -81,7 +81,7 @@ function shopMenu(u, userId) {
   if (!list.length) return null;
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
-      .setCustomId(`cl_pick:${userId}`)
+      .setCustomId(`cl_shop:${userId}`)
       .setPlaceholder('Choisis un article')
       .addOptions(list.slice(0, 25).map((s) => ({
         label: `${s.name} · ${s.cit} citrouille${s.cit > 1 ? 's' : ''}`.slice(0, 100),
@@ -220,7 +220,7 @@ async function handleComponent(i) {
       if (!menu) return i.reply({ content: 'Aucun palier disponible pour le moment.', flags: EPHEMERAL });
       return i.reply({ content: 'Choisis le palier à réclamer :', components: [menu], flags: EPHEMERAL });
     }
-    if (kind === 'cl_pick') {
+    if (kind === 'cl_pick' || kind === 'cl_shop') {
       const c = check(a, i.values[0]);
       if (c.error) return i.update({ content: c.error, components: [], embeds: [] });
       return i.update({ content: '', ...confirmView(a, c.item, c.u) });
