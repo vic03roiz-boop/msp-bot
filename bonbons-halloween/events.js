@@ -40,7 +40,7 @@ function register(client) {
       if (runtime.ticketCategoryId() && ch.parentId === runtime.ticketCategoryId()) return;
       const ctx = engine.getCtx(msg.createdTimestamp);
       const u = store.user(msg.author.id);
-      const gains = engine.onMessage(u, msg.createdTimestamp, (msg.content || '').trim().length, ctx);
+      const gains = engine.onMessage(u, msg.createdTimestamp, (msg.content || "").trim().length, ctx, msg.content || "");
       store.save();
       if (gains.length) await economy.pushGains(msg.author.id, gains);
       if (store.db.referrals[msg.author.id] && !store.db.referrals[msg.author.id].validated) await checkReferral(msg.author.id);

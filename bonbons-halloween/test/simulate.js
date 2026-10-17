@@ -1,10 +1,10 @@
-// Simule un membre parfait pendant 46 jours et vérifie les totaux annoncés dans le plan.
+// Simule plusieurs profils de membres sur 45 jours et vérifie les totaux.
 process.env.DATA_DIR = require('os').tmpdir() + '/bonbons-test';
 const assert = require('assert');
 const engine = require('../engine');
 const cfg = require('../config');
 
-function run({ msgs, voice, jeu, days }) {
+function run({ msgs, voice, games, days }) {
   const u = engine.createUser();
   const tot = {};
   const add = (g) => g.forEach((x) => { tot[x.category] = (tot[x.category] || 0) + x.amount; });
@@ -15,36 +15,49 @@ function run({ msgs, voice, jeu, days }) {
     const t0 = start + d * 864e5;
     const ctx = engine.getCtx(t0);
     assert(ctx, `jour ${d} hors événement`);
-    for (let m = 0; m < msgs; m++) add(engine.onMessage(u, t0 + m * 31000, 10, ctx));
+    for (let m = 0; m < msgs; m++) add(engine.onMessage(u, t0 + m * 31000, 10, ctx, `message numéro ${d}-${m}`));
     for (let v = 0; v < voice; v++) add(engine.onVoiceMinute(u, ctx));
-    if (jeu) add(engine.onGame(u, d % 2 ? 'drop' : 'jeu', ctx));
+    for (let g = 0; g < games; g++) add(engine.onGame(u, g === 1 ? 'drop' : 'jeu', ctx));
   }
   return { u, tot, sum: Object.values(tot).reduce((a, b) => a + b, 0) };
 }
+const cit = (n) => `${Math.floor(n / 150)} citrouille(s)`;
 
-// Membre parfait : 150 msgs, 70 min de vocal, 1 jeu par jour, tous les jours (45 jours depuis le 17 octobre)
-const perfect = run({ msgs: 150, voice: 70, jeu: true });
+// 1) Membre parfait : 500 msgs, 6 h de vocal, 3 jeux, tous les jours
+const perfect = run({ msgs: 500, voice: 360, games: 3 });
 console.log('Membre parfait :', perfect.tot, 'total', perfect.sum);
-assert.strictEqual(perfect.tot.jour, 4500, 'missions du jour = 45 x 100');
-assert.strictEqual(perfect.tot.serie, 1600, 'séries = 1600 (dont 750 pour la série complète)');
-assert.strictEqual(perfect.tot.fidelite, 1000, 'fidélité = 1000');
-assert.strictEqual(perfect.tot.semaine, 1700, 'semaines = 1700');
-assert.strictEqual(perfect.tot.succes, 800, 'succès sans parrainage/giveaway = 800');
-// + 2 succès (premier giveaway, premier parrainage) = 200, + parrainage 1200 + boost 500 + giveaways 500 => 12000
-const rest = 200 + 1200 + 500 + 500;
-assert.strictEqual(perfect.sum + rest, 12000, 'maximum théorique = 12000');
+assert.strictEqual(perfect.tot.jour, 1800, 'missions du jour = 45 x 40');
+assert.strictEqual(perfect.tot.serie, 710, 'séries');
+assert.strictEqual(perfect.tot.fidelite, 370, 'fidélité');
+assert.strictEqual(perfect.tot.semaine, 2290, 'semaines (6 x 340 + 250)');
+assert.strictEqual(perfect.tot.succes, 4820, 'succès accessibles seul');
+// hors simulation : parrainage 1200 + boost 500 + giveaways 100 + succès giveaway 80 + succès parrainage 130
+const rest = 1200 + 500 + 100 + 80 + 130;
+assert.strictEqual(perfect.sum + rest, 12000, 'maximum théorique = 12000 (80 citrouilles)');
 
-// Occasionnel : 15 jours sur 46, 30 messages, un peu de vocal
-const casual = run({ msgs: 30, voice: 25, jeu: false, days: (d) => d % 3 === 0 });
-console.log('Occasionnel (1 jour sur 3) :', casual.sum, 'bonbons');
-assert(casual.sum > 100 && casual.sum < 1500);
+// 2) Profils réalistes
+const profils = [
+  ['Occasionnel : 1 jour sur 3, 60 msgs, 1 jeu', { msgs: 60, voice: 0, games: 1, days: (d) => d % 3 === 0 }],
+  ['Régulier : tous les jours, 100 msgs, 1 jeu', { msgs: 100, voice: 0, games: 1 }],
+  ['Actif : tous les jours, 150 msgs, 40 min de vocal, 1 jeu', { msgs: 150, voice: 40, games: 1 }],
+  ['Très actif : tous les jours, 300 msgs, 1 h 40 de vocal, 3 jeux', { msgs: 300, voice: 100, games: 3 }],
+];
+for (const [nom, p] of profils) {
+  const r = run(p);
+  console.log(`${nom} -> ${r.sum} bonbons (${cit(r.sum)})`);
+}
+assert(run(profils[0][1]).sum < 500, 'occasionnel < 500');
 
-// Anti-spam : 100 messages sans écart de 30 s = 1 seul compté
+// 3) Anti-spam
 const u = engine.createUser();
 const ctx = engine.getCtx(Date.parse(`${cfg.eventStart}T10:00:00Z`));
-for (let i = 0; i < 100; i++) engine.onMessage(u, 1e12 + i * 100, 10, ctx);
+for (let i = 0; i < 100; i++) engine.onMessage(u, 1e12 + i * 100, 10, ctx, `m${i}`);
 assert.strictEqual(u.stats.msgs, 1, 'anti-spam 30 s');
-assert.deepStrictEqual(engine.onMessage(u, 10 ** 12, 3, ctx), [], 'messages < 5 caractères ignorés');
+assert.deepStrictEqual(engine.onMessage(u, 2e12, 3, ctx, 'abc'), [], 'messages < 5 caractères ignorés');
+const v = engine.createUser();
+engine.onMessage(v, 1e12, 10, ctx, 'Salut tout le monde');
+engine.onMessage(v, 1e12 + 60000, 10, ctx, 'salut tout le monde ');
+assert.strictEqual(v.stats.msgs, 1, 'message copié-collé ignoré');
 assert.strictEqual(engine.getCtx(Date.parse('2026-10-16T10:00:00Z')), null, 'avant le 17 octobre : pas d’événement');
 assert.strictEqual(engine.getCtx(Date.parse('2026-12-01T10:00:00Z')), null, 'après le 30 novembre : pas d’événement');
 

@@ -30,6 +30,7 @@ function createUser() {
     today: null,
     week: null,
     validatedDays: 0,
+    perfectWeeks: 0,
     streak: 0,
     lastValidated: null,
     streakAwards: [],
@@ -40,6 +41,7 @@ function createUser() {
     referralsValidated: 0,
     boostGiven: false,
     lastMsgAt: 0,
+    recentTexts: [],
     hist: [],
   };
 }
@@ -53,34 +55,27 @@ function rollover(u, ctx) {
   }
 }
 
-const DAILY_TESTS = {
-  connexion: (t) => t.msgs >= 1,
-  msg1: (t) => t.msgs >= 25,
-  msg2: (t) => t.msgs >= 75,
-  msg3: (t) => t.msgs >= 150,
-  voc1: (t) => t.voiceMin >= 20,
-  voc2: (t) => t.voiceMin >= 60,
-  jeu: (t) => t.jeu >= 1,
-};
-
-const ACHIEVEMENTS = [
-  ['first_msg', 'premier message', (u) => u.stats.msgs >= 1],
-  ['first_voice', 'premier vocal', (u) => u.stats.voiceMin >= 1],
-  ['first_jeu', 'première partie de mini-jeu', (u) => u.stats.jeux >= 1],
-  ['first_drop', 'premier drop attrapé', (u) => u.stats.drops >= 1],
-  ['first_giveaway', 'première participation à un giveaway', (u) => u.giveaways.length >= 1],
-  ['first_parrain', 'premier parrainage validé', (u) => u.referralsValidated >= 1],
-  ['msgs1000', '1 000 messages cumulés', (u) => u.stats.msgs >= 1000],
-  ['msgs3000', '3 000 messages cumulés', (u) => u.stats.msgs >= 3000],
-  ['voice20h', '20 h de vocal cumulées', (u) => u.stats.voiceMin >= 1200],
-  ['voice50h', '50 h de vocal cumulées', (u) => u.stats.voiceMin >= 3000],
-];
+function achievementStat(u, stat) {
+  switch (stat) {
+    case 'msgs': return u.stats.msgs;
+    case 'voiceMin': return u.stats.voiceMin;
+    case 'jeux': return u.stats.jeux;
+    case 'drops': return u.stats.drops;
+    case 'games': return u.stats.jeux + u.stats.drops;
+    case 'giveaways': return u.giveaways.length;
+    case 'referrals': return u.referralsValidated;
+    case 'perfectWeeks': return u.perfectWeeks || 0;
+    case 'dayMsgs': return u.today ? u.today.msgs : 0;
+    case 'dayVoice': return u.today ? u.today.voiceMin : 0;
+    default: return 0;
+  }
+}
 
 function evalAchievements(u, gains) {
-  for (const [id, label, test] of ACHIEVEMENTS) {
-    if (!u.achievements.includes(id) && test(u)) {
-      u.achievements.push(id);
-      gains.push({ amount: cfg.succesBonbons, reason: `succès : ${label}`, category: 'succes' });
+  for (const a of cfg.achievements) {
+    if (!u.achievements.includes(a.id) && achievementStat(u, a.stat) >= a.need) {
+      u.achievements.push(a.id);
+      gains.push({ amount: a.amount, reason: `succès : ${a.label}`, category: 'succes' });
     }
   }
 }
@@ -88,7 +83,7 @@ function evalAchievements(u, gains) {
 function evalDaily(u, ctx, gains) {
   rollover(u, ctx);
   for (const m of cfg.daily) {
-    if (!u.today.done.includes(m.id) && DAILY_TESTS[m.id](u.today)) {
+    if (!u.today.done.includes(m.id) && u.today[m.stat] >= m.need) {
       u.today.done.push(m.id);
       gains.push({ amount: m.amount, reason: `mission : ${m.label}`, category: 'jour' });
     }
@@ -116,20 +111,18 @@ function evalDaily(u, ctx, gains) {
 }
 
 function evalWeekly(u, ctx, gains) {
-  const w = ctx.weekKey === 'final' ? cfg.finalStretch : cfg.weekly;
-  const tag = ctx.weekKey === 'final' ? 'dernière ligne droite' : 'semaine';
+  const isFinal = ctx.weekKey === 'final';
+  const list = isFinal ? cfg.finalStretch.missions : cfg.weekly;
+  const tag = isFinal ? 'dernière ligne droite' : 'semaine';
   // une semaine plus courte (fin de l'événement) demande tous ses jours, pas 7
-  const weekLen = ctx.weekKey === 'final' ? cfg.finalStretch.days : Math.min(7, ctx.total - cfg.finalStretch.days - Number(ctx.weekKey.slice(1)) * 7);
-  const perfectNeeded = Math.min(w.perfect, weekLen);
-  const checks = [
-    ['msgs', u.week.msgs >= w.msgs, `${tag} : ${w.msgs} messages`],
-    ['voice', u.week.voiceMin >= w.voice, `${tag} : ${Math.round(w.voice / 60 * 10) / 10} h de vocal`],
-    ['perfect', u.week.validatedDays >= perfectNeeded, `${tag} parfaite : ${perfectNeeded} jours validés`],
-  ];
-  for (const [id, ok, label] of checks) {
-    if (ok && !u.week.done.includes(id)) {
-      u.week.done.push(id);
-      gains.push({ amount: w.awards[id], reason: label, category: 'semaine' });
+  const weekLen = isFinal ? cfg.finalStretch.days : Math.min(7, ctx.total - cfg.finalStretch.days - Number(ctx.weekKey.slice(1)) * 7);
+  for (const m of list) {
+    const have = m.stat === 'perfect' ? u.week.validatedDays : m.stat === 'msgs' ? u.week.msgs : u.week.voiceMin;
+    const need = m.stat === 'perfect' ? Math.min(m.need, weekLen) : m.need;
+    if (have >= need && !u.week.done.includes(m.id)) {
+      u.week.done.push(m.id);
+      gains.push({ amount: m.amount, reason: `${tag} : ${m.label}`, category: 'semaine' });
+      if (m.stat === 'perfect' && !isFinal) u.perfectWeeks = (u.perfectWeeks || 0) + 1;
     }
   }
 }
@@ -142,10 +135,17 @@ function evaluate(u, ctx) {
   return gains;
 }
 
-/** Un message de membre. Renvoie la liste des gains. */
-function onMessage(u, nowMs, length, ctx) {
+/** Un message de membre. text (facultatif) sert à ignorer les messages copiés-collés. */
+function onMessage(u, nowMs, length, ctx, text = '') {
   if (!ctx || length < cfg.minMsgChars) return [];
   if (nowMs - u.lastMsgAt < cfg.msgGapMs) return [];
+  const norm = String(text).trim().toLowerCase();
+  if (norm) {
+    if (!u.recentTexts) u.recentTexts = [];
+    if (u.recentTexts.includes(norm)) return []; // même message qu'un des 5 derniers : ne compte pas
+    u.recentTexts.push(norm);
+    if (u.recentTexts.length > 5) u.recentTexts.shift();
+  }
   u.lastMsgAt = nowMs;
   rollover(u, ctx);
   u.today.msgs += 1;

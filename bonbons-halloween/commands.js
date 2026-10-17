@@ -63,6 +63,9 @@ function soldeEmbed(userId, name) {
   } else {
     e.addFields({ name: 'Événement', value: 'Pas d’événement en cours.' });
   }
+  if (ctx && u.week && u.week.key === ctx.weekKey) {
+    e.addFields({ name: 'Cette semaine', value: `${ok(u.week.msgs)} messages · ${Math.floor(u.week.voiceMin / 60)} h ${u.week.voiceMin % 60} min de vocal · ${u.week.validatedDays} jour(s) validé(s)` });
+  }
   e.addFields({ name: 'Séries', value: `Série en cours : **${u.streak}** jour(s) · jours validés au total : **${u.validatedDays}**`, inline: false });
   if (u.hist.length) {
     e.addFields({ name: 'Derniers gains', value: u.hist.slice(-6).reverse().map((h) => `${h.n > 0 ? '+' : ''}${h.n} · ${h.raison}`).join('\n') });
