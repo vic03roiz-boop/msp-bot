@@ -58,10 +58,10 @@ function register(client) {
       for (const ch of guild.channels.cache.values()) {
         if (ch.type !== ChannelType.GuildVoice && ch.type !== ChannelType.GuildStageVoice) continue;
         if (ch.id === guild.afkChannelId) continue;
-        const humans = ch.members.filter((m) => !m.user.bot);
-        if (humans.size < 2) continue;
-        for (const m of humans.values()) {
-          if (m.voice.selfDeaf || m.voice.serverDeaf) continue;
+        // Compte seulement : micro ouvert ET casque actif (ni mute, ni sourdine), et au moins 2 personnes dans ce cas.
+        const live = ch.members.filter((m) => !m.user.bot && !m.voice.selfMute && !m.voice.serverMute && !m.voice.selfDeaf && !m.voice.serverDeaf);
+        if (live.size < 2) continue;
+        for (const m of live.values()) {
           const gains = engine.onVoiceMinute(store.user(m.id), ctx);
           if (gains.length) await economy.pushGains(m.id, gains);
         }

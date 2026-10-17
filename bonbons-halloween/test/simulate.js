@@ -26,11 +26,11 @@ const cit = (n) => `${Math.floor(n / 150)} citrouille(s)`;
 // 1) Membre parfait : 500 msgs, 6 h de vocal, 3 jeux, tous les jours
 const perfect = run({ msgs: 500, voice: 360, games: 3 });
 console.log('Membre parfait :', perfect.tot, 'total', perfect.sum);
-assert.strictEqual(perfect.tot.jour, 1800, 'missions du jour = 45 x 40');
-assert.strictEqual(perfect.tot.serie, 710, 'séries');
+assert.strictEqual(perfect.tot.jour, 1530, 'missions du jour = 45 x 34');
+assert.strictEqual(perfect.tot.serie, 1010, 'séries');
 assert.strictEqual(perfect.tot.fidelite, 370, 'fidélité');
-assert.strictEqual(perfect.tot.semaine, 2290, 'semaines (6 x 340 + 250)');
-assert.strictEqual(perfect.tot.succes, 4820, 'succès accessibles seul');
+assert.strictEqual(perfect.tot.semaine, 2020, 'semaines (6 x 300 + 220)');
+assert.strictEqual(perfect.tot.succes, 5060, 'succès accessibles seul');
 // hors simulation : parrainage 1200 + boost 500 + giveaways 100 + succès giveaway 80 + succès parrainage 130
 const rest = 1200 + 500 + 100 + 80 + 130;
 assert.strictEqual(perfect.sum + rest, 12000, 'maximum théorique = 12000 (80 citrouilles)');
