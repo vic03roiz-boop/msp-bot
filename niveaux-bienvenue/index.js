@@ -4,7 +4,8 @@
 // Variables Railway (toutes facultatives sauf GUILD_ID, déjà présent) :
 //   WELCOME_CHANNEL_ID        salon de bienvenue (sinon le salon système du serveur)
 //   WELCOME_RULES_CHANNEL_ID, WELCOME_ROLES_CHANNEL_ID, WELCOME_ROLES_MSP_CHANNEL_ID, WELCOME_PSEUDOS_CHANNEL_ID, WELCOME_CHAT_CHANNEL_ID : salons cités dans le message (une ligne sans salon est omise)
-//   WELCOME_BANNER_URL        lien d'une image de fond (sinon bannière du serveur, sinon assets/banniere.png, sinon dégradé)
+//   WELCOME_BANNER_URL        lien d'une image de fond (sinon assets/banniere.png, sinon dégradé de la saison)
+//   WELCOME_USE_SERVER_BANNER true : reprendre la bannière du serveur comme fond (désactivé par défaut)
 //   LEVELS_ANNOUNCE_CHANNEL_ID  salon où annoncer les passages de niveau (laisse vide tant que DraftBot les annonce encore)
 //   LEVELS_THEME                facultatif : force la saison (halloween | automne | noel | hiver). Sinon elle change toute seule avec la date
 //   LEVELS_MESSAGE              facultatif : ton propre message de passage de niveau ({user} et {level})
@@ -54,7 +55,9 @@ async function sendRank(i, user, name) {
 
 async function welcomeFor(member) {
   const g = member.guild;
-  const banner = process.env.WELCOME_BANNER_URL || g.bannerURL({ extension: 'png', size: 1024 }) || g.splashURL({ extension: 'png', size: 1024 }) || null;
+  // La bannière du serveur n'est plus reprise d'office (l'avatar cachait le nom). WELCOME_USE_SERVER_BANNER=true pour la remettre.
+  const useServerBanner = flag('WELCOME_USE_SERVER_BANNER', false);
+  const banner = process.env.WELCOME_BANNER_URL || (useServerBanner ? g.bannerURL({ extension: 'png', size: 1024 }) : null) || null;
   const buf = await cards.welcomeCard({ name: member.displayName, avatarUrl: await avatarOf(member.user), bannerUrl: banner, memberCount: g.memberCount, serverName: g.name, theme: THEME() });
   return new AttachmentBuilder(buf, { name: 'bienvenue.png' });
 }
