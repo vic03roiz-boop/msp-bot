@@ -1,6 +1,7 @@
 // Message de bienvenue : texte + salons cliquables + image de saison en bas (embed), dans le style du serveur.
 const { EmbedBuilder } = require('discord.js');
 const themes = require('./themes');
+const names = require('./names');
 
 // Salons cités dans le message (variables Railway ; une ligne dont le salon manque est simplement omise)
 const ch = (name) => { const id = (process.env[name] || '').trim(); return id ? `<#${id}>` : null; };
@@ -13,7 +14,7 @@ function build(themeName, mention, serverName, count) {
   const e = T.title[0]; // 🎃 / 🍂 / 🎄 / ❄️
   const rules = ch('WELCOME_RULES_CHANNEL_ID'), roles = ch('WELCOME_ROLES_CHANNEL_ID'), rolesMsp = ch('WELCOME_ROLES_MSP_CHANNEL_ID');
   const pseudos = ch('WELCOME_PSEUDOS_CHANNEL_ID'), chat = ch('WELCOME_CHAT_CHANNEL_ID');
-  const name = `${e} .˚ ~ **${serverName}** ~ ˚. ${e}`;
+  const name = `${e} .˚ ~ **${names.serverName(serverName)}** ~ ˚. ${e}`;
   const lines = [
     `**𝑩𝒊𝒆𝒏𝒗𝒆𝒏𝒖𝒆 𝒔𝒖𝒓** ${name}`, '', DECO, '',
     `Hey, ${mention}`, '♡ Merci d’avoir rejoint notre communauté ♡', '', SPARK, '',

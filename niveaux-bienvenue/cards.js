@@ -9,7 +9,8 @@ GlobalFonts.registerFromPath(path.join(__dirname, 'fonts', 'NotoColorEmoji.ttf')
 const themes = require('./themes');
 
 const getTheme = (name) => themes.get(name);
-const clean = (name, max = 22) => (String(name || '').replace(/[^A-Za-zÀ-ÿ0-9 _.\-!]/g, '').replace(/\s+/g, ' ').trim() || 'membre').slice(0, max);
+const names = require('./names');
+const clean = (name, max = 22) => (names.plain(String(name || '').normalize('NFKC').replace(/[^A-Za-zÀ-ÿ0-9 _.\-!'’]/g, '')) || 'membre').slice(0, max);
 const nf = (n) => Math.round(n).toLocaleString('fr-FR').replace(/ | /g, ' ');
 
 async function fetchImage(url) {
@@ -81,7 +82,7 @@ async function welcomeCard({ name, avatarUrl, bannerUrl, memberCount, serverName
   g.textAlign = 'center'; g.fillStyle = T.accent; g.font = '22px CardSansBold, CardEmoji'; g.fillText(`${T.title[0]} ${T.welcome} ${T.title[1]}`, W / 2, 232);
   g.fillStyle = T.text; g.font = '38px CardSansBold, CardEmoji'; g.fillText(clean(name, 26), W / 2, 280);
   g.fillStyle = T.mute; g.font = '19px CardSans, CardEmoji';
-  g.fillText(`${serverName ? `sur ${clean(serverName, 30)} · ` : ''}tu es le membre n°${nf(memberCount)}`, W / 2, 316);
+  g.fillText(`${serverName ? `sur ${clean(names.serverName(serverName), 30)} · ` : ''}tu es le membre n°${nf(memberCount)}`, W / 2, 316);
   return canvas.toBuffer('image/png');
 }
 
@@ -110,7 +111,7 @@ async function boostCard({ name, avatarUrl, serverName, theme }) {
   circleImage(g, await fetchImage(avatarUrl), W / 2, 118, 70, clean(name)[0], T);
   g.textAlign = 'center'; g.fillStyle = T.accent; g.font = '22px CardSansBold, CardEmoji'; g.fillText('💎 MERCI POUR LE BOOST ' + T.title[0], W / 2, 232);
   g.fillStyle = T.text; g.font = '38px CardSansBold, CardEmoji'; g.fillText(clean(name, 26), W / 2, 280);
-  g.fillStyle = T.mute; g.font = '19px CardSans, CardEmoji'; g.fillText(`tu fais briller ${clean(serverName, 30)} ✨`, W / 2, 316);
+  g.fillStyle = T.mute; g.font = '19px CardSans, CardEmoji'; g.fillText(`tu fais briller ${clean(names.serverName(serverName), 30)} ✨`, W / 2, 316);
   return canvas.toBuffer('image/png');
 }
 
