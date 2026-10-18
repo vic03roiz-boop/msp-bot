@@ -1,0 +1,7 @@
+{
+  "name": "stats-serveur",
+  "version": "1.0.0",
+  "description": "Statistiques du serveur en images (croissance, membres actifs, heures de pointe)",
+  "main": "index.js",
+  "dependencies": { "@napi-rs/canvas": "^0.1.65" }
+}
