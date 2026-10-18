@@ -14,7 +14,7 @@ const { generateWheelGif } = require('./utils/wheelImage');
 const { buildGiveawayEmbed } = require('./commands/creategw');
 const { buildLobbyEmbed } = require('./commands/uno');
 const bonbons = require('./bonbons-halloween'); // 🎃 système bonbons / citrouilles
-const statsServeur = require('./stats-serveur'); // 📊 statistiques du serveur
+const niveaux = require('./niveaux-bienvenue'); // 🏆 niveaux, cartes de rang, bienvenue
 
 // --- Petit serveur web ---
 // Render (et d'autres hébergeurs "gratuits") ont besoin que l'app réponde sur un port web
@@ -73,7 +73,7 @@ try {
 
 // 🎃 Système bonbons / citrouilles : ajoute ses commandes à client.commands (donc enregistrées avec les tiennes au démarrage)
 bonbons.init(client, { getGuildConfig: storage.getGuildConfig });
-statsServeur.init(client); // 📊 /stats + rapport du lundi
+niveaux.init(client); // 🏆 /rang /classement + bienvenue en image
 
 console.log('🔄 Tentative de connexion à Discord...');
 
