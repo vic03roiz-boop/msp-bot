@@ -51,6 +51,8 @@ const client = new Client({
     GatewayIntentBits.GuildMessageReactions, // nécessaire pour /drop et le règlement
     GatewayIntentBits.GuildVoiceStates, // 🎃 bonbons : temps passé en vocal
     GatewayIntentBits.GuildInvites, // 🎃 bonbons : parrainage (qui a invité qui)
+    GatewayIntentBits.GuildModeration,
+    GatewayIntentBits.GuildEmojisAndStickers,
   ],
   // Nécessaire pour que les réactions fonctionnent même sur un message envoyé avant
   // le dernier redémarrage du bot (comme le règlement, qui reste affiché des mois)
