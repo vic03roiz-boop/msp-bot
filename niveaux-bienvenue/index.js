@@ -23,6 +23,8 @@ const cards = require('./cards');
 const welcome = require('./welcome');
 const invitelog = require('./invitelog');
 const annonces = require('./annonces');
+const moderation = require('./moderation');
+const avent = require('./avent');
 
 const EPHEMERAL = 64;
 let inv = null; // journal des invitations (créé dans init)
@@ -207,8 +209,9 @@ async function run(i) {
 
 function init(client) {
   const ownRegistration = !client.commands;
-  if (client.commands) { for (const d of DEFS) client.commands.set(d.name, { data: d, execute: run }); for (const d of annonces.defs) client.commands.set(d.name, { data: d, execute: annonces.run }); }
-  annonces.register(client);
+  if (client.commands) { for (const d of DEFS) client.commands.set(d.name, { data: d, execute: run }); for (const d of annonces.defs) client.commands.set(d.name, { data: d, execute: annonces.run }); for (const d of moderation.defs) client.commands.set(d.name, { data: d, execute: moderation.run }); }
+  for (const d of avent.defs) if (client.commands) client.commands.set(d.name, { data: d, execute: avent.run });
+  annonces.register(client); avent.register(client); moderation.register(client);
 
   client.on(Events.MessageCreate, async (msg) => {
     try {
@@ -261,7 +264,9 @@ function init(client) {
 
   if (ownRegistration) {
     client.on(Events.InteractionCreate, (i) => {
+      if (i.isChatInputCommand() && avent.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) avent.run(i).catch((e) => console.error('[avent]', e));
       if (i.isChatInputCommand() && annonces.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) annonces.run(i).catch((e) => console.error('[annonces]', e));
+      if (i.isChatInputCommand() && moderation.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) moderation.run(i).catch((e) => console.error('[moderation]', e));
       if (i.isChatInputCommand() && ['rang', 'classement', 'niveaux', 'invites'].includes(i.commandName) && i.guild?.id === GUILD_ID()) run(i).catch((e) => console.error('[niveaux]', e));
     });
   }
@@ -270,7 +275,7 @@ function init(client) {
     const guild = client.guilds.cache.get(GUILD_ID());
     if (!guild) return console.error('[niveaux] GUILD_ID introuvable : vérifie la variable GUILD_ID');
     await inv.init(guild);
-    if (ownRegistration) for (const d of [...DEFS, ...annonces.defs]) await guild.commands.create(d.toJSON()).catch(() => {});
+    if (ownRegistration) for (const d of [...DEFS, ...annonces.defs, ...avent.defs, ...moderation.defs]) await guild.commands.create(d.toJSON()).catch(() => {});
     levels.backupIfNeeded();
     console.log('[niveaux] 🏆 niveaux et bienvenue prêts');
   };
