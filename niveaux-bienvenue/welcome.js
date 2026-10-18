@@ -28,4 +28,13 @@ function build(themeName, mention, serverName, count) {
   return { content: `⋆｡°ʚɞ°｡⋆ Welcome ${mention} ⋆｡°ʚɞ°｡⋆`, embeds: [embed] };
 }
 
-module.exports = { build };
+/** Message de remerciement pour un boost, même style que la bienvenue. */
+function buildBoost(themeName, mention) {
+  const T = themes.get(themeName);
+  const e = T.title[0];
+  const embed = new EmbedBuilder().setColor(parseInt(T.accent.slice(1), 16)).setImage('attachment://boost.png')
+    .setDescription([DECO, '', `${e} ♡ ${mention} vient de booster le serveur ! Merci ♡ ${e}`, '', DECO].join('\n'));
+  return { content: `⋆｡°ʚɞ°｡⋆ Merci ${mention} ⋆｡°ʚɞ°｡⋆`, embeds: [embed] };
+}
+
+module.exports = { build, buildBoost };
