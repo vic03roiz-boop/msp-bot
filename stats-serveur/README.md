@@ -10,7 +10,7 @@ Le bot envoie aussi tout seul un **rapport chaque lundi à 9 h** dans le salon l
 
 ## Installation
 1. Glisse le dossier `stats-serveur` à la racine de ton repo GitHub (à côté de `index.js`).
-2. Dans `package.json` du bot, ajoute la dépendance `"@napi-rs/canvas": "^0.1.65"` (ou laisse Railway l'installer depuis le `package.json` fourni).
+2. Dans `package.json` du bot, ajoute la dépendance `"@napi-rs/canvas": "^1.0.7"` (ou laisse Railway l'installer depuis le `package.json` fourni).
 3. Dans `index.js`, après `bonbons.init(...)` :
    ```js
    const statsServeur = require('./stats-serveur');
