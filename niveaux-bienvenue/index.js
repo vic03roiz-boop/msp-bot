@@ -23,6 +23,7 @@ const welcome = require('./welcome');
 const invitelog = require('./invitelog');
 
 const EPHEMERAL = 64;
+let inv = null; // journal des invitations (créé dans init)
 const GUILD_ID = () => process.env.GUILD_ID || '';
 function excluded() {
   const env = (process.env.LEVELS_EXCLUDED_CHANNEL_IDS || '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -37,6 +38,8 @@ const staffOk = (i) => i.memberPermissions?.has(PermissionFlagsBits.ManageGuild)
 const DEFS = [
   new SlashCommandBuilder().setName('rang').setDescription('Ta carte de niveau')
     .addUserOption((o) => o.setName('membre').setDescription('Voir la carte d’un autre membre')),
+  new SlashCommandBuilder().setName('invites').setDescription('Voir ton nombre d’invitations')
+    .addUserOption((o) => o.setName('membre').setDescription('Voir celui d’un autre membre')),
   new SlashCommandBuilder().setName('classement').setDescription('Le top 10 des niveaux du serveur'),
   new SlashCommandBuilder().setName('niveaux').setDescription('(Staff) Gérer les niveaux et la bienvenue')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
@@ -47,6 +50,11 @@ const DEFS = [
       .addAttachmentOption((o) => o.setName('fichier').setDescription('Fichier .txt ou .csv').setRequired(true))
       .addStringOption((o) => o.setName('type').setDescription('Ce que contient la 2e colonne').addChoices({ name: 'Niveau (par défaut)', value: 'niveau' }, { name: 'XP total', value: 'xp' })))
     .addSubcommand((s) => s.setName('apercu-bienvenue').setDescription('Voir l’image de bienvenue avec ton profil'))
+        .addSubcommand((s) => s.setName('invitations-definir').setDescription('Fixer le nombre d’invitations d’un membre')
+      .addUserOption((o) => o.setName('membre').setDescription('Membre').setRequired(true))
+      .addIntegerOption((o) => o.setName('nombre').setDescription('Nombre d’invitations').setMinValue(0).setRequired(true)))
+    .addSubcommand((s) => s.setName('invitations-importer').setDescription('Importer les invitations d’InviteLogger (une ligne : pseudo;nombre)')
+      .addAttachmentOption((o) => o.setName('fichier').setDescription('Fichier .txt ou .csv').setRequired(true)))
     .addSubcommand((s) => s.setName('apercu-depart').setDescription('Voir le message d’au revoir avec ton profil'))
     .addSubcommand((s) => s.setName('apercu-boost').setDescription('Voir le message de remerciement pour un boost avec ton profil')),
 ];
@@ -87,6 +95,16 @@ async function run(i) {
     const member = await i.guild.members.fetch(user.id).catch(() => null);
     return sendRank(i, user, member?.displayName || user.username);
   }
+  if (name === 'invites') {
+    await i.deferReply();
+    const user = i.options.getUser('membre') || i.user;
+    const n = inv.count(user.id);
+    const rank = inv.ranking().findIndex(([id]) => id === user.id) + 1;
+    const member = await i.guild.members.fetch(user.id).catch(() => null);
+    const e = new EmbedBuilder().setColor(0xff8a2b).setTitle(`📨 Invitations de ${member?.displayName || user.username}`)
+      .setDescription(`**${n} invitation${n > 1 ? 's' : ''}**${rank ? `\nClassement : **#${rank}** sur ${inv.ranking().length}` : '\nPas encore d’invitation, partage ton lien du serveur !'}`);
+    return i.editReply({ embeds: [e], allowedMentions: { parse: [] } });
+  }
   if (name === 'classement') {
     await i.deferReply();
     if (!flag('LEVELS_VIEW_OTHERS', true) && !staffOk(i)) return i.editReply('Le classement est désactivé sur ce serveur 🔒');
@@ -125,6 +143,32 @@ async function run(i) {
       if (res?.ambiguous.length) out += `\n⚠️ Plusieurs membres possibles, à régler avec /niveaux definir : ${list(res.ambiguous)}`;
       if (res?.missing.length) out += `\n❓ Pseudo introuvable sur le serveur (parti ou pseudo changé) : ${list(res.missing)}`;
       if (parsed.bad.length) out += `\n⚠️ ${parsed.bad.length} ligne(s) illisible(s), par exemple : \`${parsed.bad.slice(0, 3).join('` · `')}\``;
+      return i.editReply(out.slice(0, 1900));
+    }
+    if (sub === 'invitations-definir') {
+      const u = i.options.getUser('membre'), n = i.options.getInteger('nombre');
+      inv.setCount(u.id, n); inv.flush();
+      return i.reply({ content: `Invitations de <@${u.id}> fixées à **${n}**.`, flags: EPHEMERAL, allowedMentions: { parse: [] } });
+    }
+    if (sub === 'invitations-importer') {
+      await i.deferReply({ flags: EPHEMERAL });
+      const att = i.options.getAttachment('fichier');
+      if (att.size > 2_000_000) return i.editReply('Fichier trop gros (2 Mo maximum).');
+      const parsed = levels.parseImport(await (await fetch(att.url)).text());
+      let res = null;
+      if (parsed.names.length) {
+        const all = await i.guild.members.fetch();
+        res = levels.matchNames(parsed.names, [...all.values()].map((m) => ({ id: m.id, names: [m.displayName, m.user.username, m.user.globalName] })));
+        parsed.ok.push(...res.matched);
+      }
+      for (const { id, value } of parsed.ok) inv.setCount(id, value);
+      inv.flush();
+      const list = (a) => a.slice(0, 25).map((e) => `${cards.clean(e.name, 30)} (${e.value})`).join(', ');
+      let out = `✅ ${parsed.ok.length} membre(s) importé(s).`;
+      const approx = res ? res.matched.filter((m) => m.approx) : [];
+      if (approx.length) out += `\n🔎 Associés par ressemblance (à vérifier avec /invites) : ${list(approx)}`;
+      if (res?.ambiguous.length) out += `\n⚠️ Plusieurs membres possibles, à régler avec /niveaux invitations-definir : ${list(res.ambiguous)}`;
+      if (res?.missing.length) out += `\n❓ Pseudo introuvable sur le serveur (parti ou pseudo changé) : ${list(res.missing)}`;
       return i.editReply(out.slice(0, 1900));
     }
     if (sub === 'apercu-depart') {
@@ -200,10 +244,10 @@ function init(client) {
 
   if (ownRegistration) {
     client.on(Events.InteractionCreate, (i) => {
-      if (i.isChatInputCommand() && ['rang', 'classement', 'niveaux'].includes(i.commandName) && i.guild?.id === GUILD_ID()) run(i).catch((e) => console.error('[niveaux]', e));
+      if (i.isChatInputCommand() && ['rang', 'classement', 'niveaux', 'invites'].includes(i.commandName) && i.guild?.id === GUILD_ID()) run(i).catch((e) => console.error('[niveaux]', e));
     });
   }
-  const inv = invitelog.register(client);
+  inv = invitelog.register(client);
   const start = async () => {
     const guild = client.guilds.cache.get(GUILD_ID());
     if (!guild) return console.error('[niveaux] GUILD_ID introuvable : vérifie la variable GUILD_ID');

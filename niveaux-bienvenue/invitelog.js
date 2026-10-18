@@ -94,7 +94,14 @@ function register(client) {
     } catch (err) { console.error('[invites] départ', err.message); }
   });
 
-  return { init: async (guild) => { await refresh(guild); } };
+  return {
+    init: async (guild) => { await refresh(guild); },
+    count: (id) => db.counts[id] || 0,
+    /** Fixe le nombre d'invitations d'un membre (import depuis InviteLogger, correction à la main). */
+    setCount: (id, n) => { db.counts[id] = Math.max(0, Math.floor(n)); db.baselined[id] = true; save(); },
+    ranking: () => Object.entries(db.counts).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]),
+    flush: saveNow,
+  };
 }
 
 module.exports = { register, detectInviter, snapshot };
