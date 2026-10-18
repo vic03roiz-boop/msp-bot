@@ -9,6 +9,7 @@
 //   BOOST_CHANNEL_ID          salon du message « merci pour le boost » (sinon le salon de bienvenue)
 //   WELCOME_BANNER_URL        lien d'une image de fond (sinon assets/banniere.png, sinon dégradé de la saison)
 //   WELCOME_USE_SERVER_BANNER true : reprendre la bannière du serveur comme fond (désactivé par défaut)
+//   ANNONCE_CHANNEL_ID, ANNONCE_ROLE_ID  /annonce-msp : salon et rôle pingé par défaut (facultatif, sinon choisis-les dans la commande)
 //   LEVELS_ANNOUNCE_CHANNEL_ID  salon où annoncer les passages de niveau (laisse vide tant que DraftBot les annonce encore)
 //   LEVELS_THEME                facultatif : force la saison (halloween | automne | noel | hiver). Sinon elle change toute seule avec la date
 //   LEVELS_MESSAGE              facultatif : ton propre message de passage de niveau ({user} et {level})
@@ -21,6 +22,7 @@ const levels = require('./levels');
 const cards = require('./cards');
 const welcome = require('./welcome');
 const invitelog = require('./invitelog');
+const annonces = require('./annonces');
 
 const EPHEMERAL = 64;
 let inv = null; // journal des invitations (créé dans init)
@@ -205,7 +207,8 @@ async function run(i) {
 
 function init(client) {
   const ownRegistration = !client.commands;
-  if (client.commands) for (const d of DEFS) client.commands.set(d.name, { data: d, execute: run });
+  if (client.commands) { for (const d of DEFS) client.commands.set(d.name, { data: d, execute: run }); for (const d of annonces.defs) client.commands.set(d.name, { data: d, execute: annonces.run }); }
+  annonces.register(client);
 
   client.on(Events.MessageCreate, async (msg) => {
     try {
@@ -258,6 +261,7 @@ function init(client) {
 
   if (ownRegistration) {
     client.on(Events.InteractionCreate, (i) => {
+      if (i.isChatInputCommand() && annonces.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) annonces.run(i).catch((e) => console.error('[annonces]', e));
       if (i.isChatInputCommand() && ['rang', 'classement', 'niveaux', 'invites'].includes(i.commandName) && i.guild?.id === GUILD_ID()) run(i).catch((e) => console.error('[niveaux]', e));
     });
   }
@@ -266,7 +270,7 @@ function init(client) {
     const guild = client.guilds.cache.get(GUILD_ID());
     if (!guild) return console.error('[niveaux] GUILD_ID introuvable : vérifie la variable GUILD_ID');
     await inv.init(guild);
-    if (ownRegistration) for (const d of DEFS) await guild.commands.create(d.toJSON()).catch(() => {});
+    if (ownRegistration) for (const d of [...DEFS, ...annonces.defs]) await guild.commands.create(d.toJSON()).catch(() => {});
     levels.backupIfNeeded();
     console.log('[niveaux] 🏆 niveaux et bienvenue prêts');
   };
