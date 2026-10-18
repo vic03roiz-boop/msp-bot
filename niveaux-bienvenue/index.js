@@ -3,6 +3,7 @@
 //   niveaux.init(client);   // UNE fois, après stats-serveur
 // Variables Railway (toutes facultatives sauf GUILD_ID, déjà présent) :
 //   WELCOME_CHANNEL_ID        salon de bienvenue (sinon le salon système du serveur)
+//   WELCOME_RULES_CHANNEL_ID, WELCOME_ROLES_CHANNEL_ID, WELCOME_ROLES_MSP_CHANNEL_ID, WELCOME_PSEUDOS_CHANNEL_ID, WELCOME_CHAT_CHANNEL_ID : salons cités dans le message (une ligne sans salon est omise)
 //   WELCOME_BANNER_URL        lien d'une image de fond (sinon bannière du serveur, sinon assets/banniere.png, sinon dégradé)
 //   LEVELS_ANNOUNCE_CHANNEL_ID  salon où annoncer les passages de niveau (laisse vide tant que DraftBot les annonce encore)
 //   LEVELS_THEME                facultatif : force la saison (halloween | automne | noel | hiver). Sinon elle change toute seule avec la date
@@ -14,6 +15,7 @@
 const { Events, SlashCommandBuilder, PermissionFlagsBits, AttachmentBuilder, EmbedBuilder } = require('discord.js');
 const levels = require('./levels');
 const cards = require('./cards');
+const welcome = require('./welcome');
 
 const EPHEMERAL = 64;
 const GUILD_ID = () => process.env.GUILD_ID || '';
@@ -109,7 +111,8 @@ async function run(i) {
     if (sub === 'apercu-bienvenue') {
       await i.deferReply({ flags: EPHEMERAL });
       const member = await i.guild.members.fetch(i.user.id);
-      return i.editReply({ content: 'Voilà ce que verra un nouvel arrivant :', files: [await welcomeFor(member)] });
+      const w = welcome.build(THEME(), `<@${member.id}>`, i.guild.name, i.guild.memberCount);
+      return i.editReply({ ...w, content: `Voilà ce que verra un nouvel arrivant :\n${w.content}`, files: [await welcomeFor(member)], allowedMentions: { parse: [] } });
     }
   }
 }
@@ -139,7 +142,7 @@ function init(client) {
       if (member.guild.id !== GUILD_ID() || member.user.bot) return;
       const ch = await client.channels.fetch(process.env.WELCOME_CHANNEL_ID || member.guild.systemChannelId || '0').catch(() => null);
       if (!ch?.isTextBased()) return;
-      await ch.send({ content: `Bienvenue <@${member.id}> ! 🎃`, files: [await welcomeFor(member)], allowedMentions: { users: [member.id] } });
+      await ch.send({ ...welcome.build(THEME(), `<@${member.id}>`, member.guild.name, member.guild.memberCount), files: [await welcomeFor(member)], allowedMentions: { users: [member.id] } });
     } catch (e) { console.error('[bienvenue]', e.message); }
   });
 

@@ -33,8 +33,9 @@ function circleImage(g, img, cx, cy, r, fallbackLetter, T) {
   g.beginPath(); g.arc(cx, cy, r + 3, 0, Math.PI * 2); g.lineWidth = 5; g.strokeStyle = T.accent; g.stroke();
 }
 /** Emojis de saison en décor (légers, sur les bords) + un grand emoji principal à droite. */
-function decor(g, W, H, T, big = true) {
-  const spots = [[0.045, 0.12, 0.13], [0.30, 0.92, 0.10], [0.62, 0.10, 0.10], [0.80, 0.90, 0.13], [0.975, 0.45, 0.10], [0.50, 0.50, 0], [0.02, 0.88, 0.11]];
+function decor(g, W, H, T, big = true, sides = false) {
+  let spots = [[0.045, 0.12, 0.13], [0.30, 0.92, 0.10], [0.62, 0.10, 0.10], [0.80, 0.90, 0.13], [0.975, 0.45, 0.10], [0.50, 0.50, 0], [0.02, 0.88, 0.11]];
+  if (sides) spots = [[0.06, 0.16, 0.2], [0.94, 0.18, 0.17], [0.04, 0.78, 0.16], [0.95, 0.80, 0.2], [0.17, 0.46, 0.1], [0.84, 0.48, 0.1]];
   g.save(); g.fillStyle = '#ffffff'; g.globalAlpha = 0.4; g.textAlign = 'center'; g.textBaseline = 'middle';
   spots.forEach(([fx, fy, fs], k) => { if (!fs) return; g.font = `${Math.round(H * fs * 1.6)}px CardEmoji`; g.fillText(T.emojis[(k + 1) % T.emojis.length], W * fx, H * fy); });
   g.restore();
@@ -75,7 +76,7 @@ async function welcomeCard({ name, avatarUrl, bannerUrl, memberCount, serverName
   let banner = await fetchImage(bannerUrl);
   if (!banner) { const local = path.join(__dirname, 'assets', 'banniere.png'); if (fs.existsSync(local)) banner = await loadImage(fs.readFileSync(local)).catch(() => null); }
   if (banner) { cover(g, banner, W, H); g.fillStyle = '#10081f99'; g.fillRect(0, 0, W, H); } else gradient(g, W, H, T);
-  decor(g, W, H, T, false);
+  decor(g, W, H, T, false, true);
   circleImage(g, await fetchImage(avatarUrl), W / 2, 118, 70, clean(name)[0], T);
   g.textAlign = 'center'; g.fillStyle = T.accent; g.font = '22px CardSansBold, CardEmoji'; g.fillText(`${T.title[0]} ${T.welcome} ${T.title[1]}`, W / 2, 232);
   g.fillStyle = T.text; g.font = '38px CardSansBold, CardEmoji'; g.fillText(clean(name, 26), W / 2, 280);
