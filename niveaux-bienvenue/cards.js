@@ -128,4 +128,38 @@ async function leaveCard({ name, avatarUrl, serverName, theme }) {
   return canvas.toBuffer('image/png');
 }
 
-module.exports = { leaveCard, boostCard, levelUpCard, getTheme, rankCard, welcomeCard, clean, nf };
+/** Carte « invitations » 960 x 340 : profil à gauche, total, tuiles de détail et barre vers le rang du dessus. */
+async function invitesCard({ name, avatarUrl, count, rank, total, gap, above, tiles, theme }) {
+  const T = getTheme(theme);
+  const W = 960, H = 340, canvas = createCanvas(W, H), g = canvas.getContext('2d');
+  gradient(g, W, H, T);
+  decor(g, W, H, T, false, true);
+  const rr = (x, y, w, h, r, fill) => { g.fillStyle = fill; g.beginPath(); g.roundRect(x, y, w, h, r); g.fill(); };
+  rr(24, 24, 270, H - 48, 24, 'rgba(0,0,0,0.38)');
+  circleImage(g, await fetchImage(avatarUrl), 159, 118, 66, clean(name)[0], T);
+  g.textAlign = 'center'; g.fillStyle = T.text; g.font = '24px CardSansBold, CardEmoji'; g.fillText(clean(name, 16), 159, 226);
+  rr(84, 248, 150, 38, 19, T.accent);
+  g.fillStyle = '#1a0f08'; g.font = '19px CardSansBold, CardEmoji'; g.fillText(rank ? `🏆 #${rank} / ${total}` : 'Non classé', 159, 274);
+  const x0 = 326;
+  g.textAlign = 'left'; g.fillStyle = T.accent; g.font = '19px CardSansBold, CardEmoji'; g.fillText(`📨 INVITATIONS ${T.title[0]}`, x0, 62);
+  g.fillStyle = T.accent2; g.font = '72px CardSansBold, CardEmoji'; g.fillText(nf(count), x0, 140);
+  const w = g.measureText(nf(count)).width;
+  g.fillStyle = T.mute; g.font = '24px CardSans, CardEmoji'; g.fillText(count > 1 ? 'au total' : 'au total', x0 + w + 14, 140);
+  const n = tiles.length, tw = (W - 24 - x0 - 12 * (n - 1) - 12) / n;
+  tiles.forEach((t, k) => {
+    const x = x0 + k * (tw + 12);
+    rr(x, 164, tw, 84, 16, 'rgba(255,255,255,0.09)');
+    g.textAlign = 'center'; g.fillStyle = T.text; g.font = '30px CardSansBold, CardEmoji'; g.fillText(nf(t.value), x + tw / 2, 206);
+    g.fillStyle = T.mute; g.font = '15px CardSans, CardEmoji'; g.fillText(`${t.icon} ${t.label}`, x + tw / 2, 232);
+  });
+  g.textAlign = 'left';
+  if (rank === 1) { g.fillStyle = T.text; g.font = '18px CardSansBold, CardEmoji'; g.fillText('👑 En tête du classement !', x0, 292); }
+  else if (rank) {
+    const bw = W - 36 - x0, pct = Math.max(0.04, Math.min(1, count / (count + gap)));
+    rr(x0, 276, bw, 14, 7, 'rgba(255,255,255,0.12)'); rr(x0, 276, bw * pct, 14, 7, T.accent);
+    g.fillStyle = T.mute; g.font = '15px CardSans, CardEmoji'; g.fillText(`Encore ${gap} pour dépasser ${clean(above, 20)}`, x0, 314);
+  } else { g.fillStyle = T.mute; g.font = '16px CardSans, CardEmoji'; g.fillText('Partage le lien du serveur pour apparaître au classement !', x0, 300); }
+  return canvas.toBuffer('image/png');
+}
+
+module.exports = { invitesCard, leaveCard, boostCard, levelUpCard, getTheme, rankCard, welcomeCard, clean, nf };

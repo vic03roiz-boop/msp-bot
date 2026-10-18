@@ -49,4 +49,20 @@ function buildLeave(themeName, mention, serverName) {
   return { content: `⋆｡°ʚɞ°｡⋆ Bye ${mention} ⋆｡°ʚɞ°｡⋆`, embeds: [embed] };
 }
 
-module.exports = { build, buildBoost, buildLeave };
+/** Carte /invites : détail à la InviteLogger, dans le style du serveur. detail = { joins, left, fake, bonus } ou null. */
+function buildInvites(themeName, { mention, count, rank, total, gap, aboveName, detail, invited, left }) {
+  const T = themes.get(themeName);
+  const e = T.title[0];
+  const lines = [`**𝑰𝒏𝒗𝒊𝒕𝒂𝒕𝒊𝒐𝒏𝒔** ${e}`, '', DECO, '', `${mention} a actuellement **${count}** invitation${count > 1 ? 's' : ''} ! 👏`, ''];
+  if (detail) lines.push(`✅ **${detail.joins}** invités`, `❌ **${detail.left}** partis`, `🚫 **${detail.fake}** invalidées`, `✨ **${detail.bonus}** bonus`, '');
+  else if (invited) lines.push(`✅ **${invited}** arrivée${invited > 1 ? 's' : ''} suivie${invited > 1 ? 's' : ''} depuis l’installation du bot`, `❌ **${left}** parti${left > 1 ? 's' : ''}`, '');
+  lines.push(SPARK, '');
+  lines.push(rank ? `🏆 Classement : **#${rank}** sur ${total}` : 'Pas encore classé·e : partage le lien du serveur !');
+  if (rank === 1) lines.push('👑 Tu es en tête du classement !');
+  else if (rank) lines.push(`Encore **${gap}** invitation${gap > 1 ? 's' : ''} pour dépasser **${aboveName}**`);
+  lines.push('', DECO);
+  const embed = new EmbedBuilder().setColor(parseInt(T.accent.slice(1), 16)).setDescription(lines.join('\n')).setImage('attachment://invitations.png');
+  return { embeds: [embed] };
+}
+
+module.exports = { buildInvites, build, buildBoost, buildLeave };

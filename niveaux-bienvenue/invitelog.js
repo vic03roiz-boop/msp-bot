@@ -8,7 +8,7 @@ const themes = require('./themes');
 const DIR = process.env.DATA_DIR || (fs.existsSync('/app/data') ? '/app/data' : path.join(__dirname, 'data'));
 const FILE = path.join(DIR, 'invites-log.json');
 fs.mkdirSync(DIR, { recursive: true });
-let db = { members: {}, counts: {}, baselined: {} }; // members: id -> { inviter, joinedAt } · counts: nombre d'invitations par parrain
+let db = { members: {}, counts: {}, baselined: {}, detail: {} }; // members: id -> { inviter, joinedAt } · counts: nombre d'invitations par parrain
 try { if (fs.existsSync(FILE)) db = { ...db, ...JSON.parse(fs.readFileSync(FILE, 'utf8')) }; } catch (e) { console.error('[invites] fichier illisible', e.message); }
 let timer = null;
 const saveNow = () => { clearTimeout(timer); timer = null; fs.writeFileSync(`${FILE}.tmp`, JSON.stringify(db)); fs.renameSync(`${FILE}.tmp`, FILE); };
@@ -70,6 +70,7 @@ function register(client) {
       const e = themes.get(themes.currentName()).title[0];
       if (inviter && inviter !== member.id) {
         db.counts[inviter] = (db.counts[inviter] || 0) + 1;
+        bump(inviter, 'joins');
         db.members[member.id] = { inviter, joinedAt: Date.now() };
         save();
         const n = db.counts[inviter];
@@ -86,6 +87,7 @@ function register(client) {
     try {
       if (member.guild.id !== GUILD() || member.user?.bot) return;
       const rec = db.members[member.id];
+      if (rec) { rec.left = true; if (rec.inviter) bump(rec.inviter, 'left'); save(); }
       const who = bold(member.displayName || member.user?.username || 'Un membre');
       const text = rec?.inviter
         ? `${who} vient de partir… Elle/Il avait été invité(e) par ${bold(await nameOf(member.guild, rec.inviter))}.`
@@ -94,11 +96,31 @@ function register(client) {
     } catch (err) { console.error('[invites] départ', err.message); }
   });
 
+  /** Détail à la InviteLogger : n'existe que pour les membres importés avec le détail ; ensuite il suit les arrivées / départs. */
+  function bump(id, k) {
+    if (!db.detail) db.detail = {};
+    const d = db.detail[id]; if (d) d[k] += 1;
+  }
+
   return {
     init: async (guild) => { await refresh(guild); },
     count: (id) => db.counts[id] || 0,
     /** Fixe le nombre d'invitations d'un membre (import depuis InviteLogger, correction à la main). */
-    setCount: (id, n) => { db.counts[id] = Math.max(0, Math.floor(n)); db.baselined[id] = true; save(); },
+    setCount: (id, n) => { if (db.detail) delete db.detail[id]; db.counts[id] = Math.max(0, Math.floor(n)); db.baselined[id] = true; save(); },
+    /** Chiffres d'un membre pour sa carte : total, rang, voisin du dessus, invités / partis suivis depuis l'installation. */
+    stats: (id) => {
+      const rk = Object.entries(db.counts).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+      const idx = rk.findIndex(([k]) => k === id);
+      const mine = Object.values(db.members).filter((m) => m.inviter === id);
+      return { count: db.counts[id] || 0, rank: idx >= 0 ? idx + 1 : 0, total: rk.length, above: idx > 0 ? { id: rk[idx - 1][0], n: rk[idx - 1][1] } : null,
+        detail: (db.detail || {})[id] || null, invited: mine.length, left: mine.filter((m) => m.left).length };
+    },
+    /** Fixe tout le détail (invités, partis, invalidées, bonus) ; le total en découle. */
+    setDetail: (id, d) => {
+      if (!db.detail) db.detail = {};
+      db.detail[id] = { joins: d.joins, left: d.left, fake: d.fake, bonus: d.bonus };
+      db.counts[id] = Math.max(0, d.joins + d.bonus - d.fake - d.left); db.baselined[id] = true; save();
+    },
     ranking: () => Object.entries(db.counts).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]),
     flush: saveNow,
   };

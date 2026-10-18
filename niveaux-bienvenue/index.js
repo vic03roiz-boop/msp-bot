@@ -98,12 +98,15 @@ async function run(i) {
   if (name === 'invites') {
     await i.deferReply();
     const user = i.options.getUser('membre') || i.user;
-    const n = inv.count(user.id);
-    const rank = inv.ranking().findIndex(([id]) => id === user.id) + 1;
+    const s = inv.stats(user.id);
     const member = await i.guild.members.fetch(user.id).catch(() => null);
-    const e = new EmbedBuilder().setColor(0xff8a2b).setTitle(`📨 Invitations de ${member?.displayName || user.username}`)
-      .setDescription(`**${n} invitation${n > 1 ? 's' : ''}**${rank ? `\nClassement : **#${rank}** sur ${inv.ranking().length}` : '\nPas encore d’invitation, partage ton lien du serveur !'}`);
-    return i.editReply({ embeds: [e], allowedMentions: { parse: [] } });
+    const aboveName = s.above ? await i.guild.members.fetch(s.above.id).then((m) => m.displayName).catch(() => 'le membre au-dessus') : '';
+    const tiles = s.detail
+      ? [{ icon: '✅', label: 'invités', value: s.detail.joins }, { icon: '❌', label: 'partis', value: s.detail.left }, { icon: '🚫', label: 'invalidées', value: s.detail.fake }, { icon: '✨', label: 'bonus', value: s.detail.bonus }]
+      : [{ icon: '✅', label: 'arrivées suivies', value: s.invited }, { icon: '❌', label: 'parties', value: s.left }];
+    const buf = await cards.invitesCard({ name: member?.displayName || user.username, avatarUrl: await avatarOf(user), count: s.count, rank: s.rank, total: s.total,
+      gap: s.above ? s.above.n - s.count + 1 : 0, above: aboveName, tiles, theme: THEME() });
+    return i.editReply({ files: [new AttachmentBuilder(buf, { name: 'invitations.png' })] });
   }
   if (name === 'classement') {
     await i.deferReply();
@@ -154,14 +157,25 @@ async function run(i) {
       await i.deferReply({ flags: EPHEMERAL });
       const att = i.options.getAttachment('fichier');
       if (att.size > 2_000_000) return i.editReply('Fichier trop gros (2 Mo maximum).');
-      const parsed = levels.parseImport(await (await fetch(att.url)).text());
+      // Format simple « pseudo;total » ou détaillé « pseudo;invités;partis;invalidées;bonus » (le total est calculé)
+      const det = {};
+      const raw = (await (await fetch(att.url)).text()).split(/\r?\n/).map((l) => {
+        const p = l.split(/[;\t]/).map((x) => x.trim());
+        if (p.length === 5 && p.slice(1).every((x) => /^\d+$/.test(x))) {
+          const [, j, l2, f, b] = p.map(Number); det[levels.norm(p[0])] = { joins: j, left: l2, fake: f, bonus: b };
+          return `${p[0]};${Math.max(0, j + b - f - l2)}`;
+        }
+        return l;
+      }).join('\n');
+      const parsed = levels.parseImport(raw);
       let res = null;
       if (parsed.names.length) {
         const all = await i.guild.members.fetch();
         res = levels.matchNames(parsed.names, [...all.values()].map((m) => ({ id: m.id, names: [m.displayName, m.user.username, m.user.globalName] })));
         parsed.ok.push(...res.matched);
+        for (const m of res.matched) { const d = det[levels.norm(m.name)]; if (d) m.detail = d; }
       }
-      for (const { id, value } of parsed.ok) inv.setCount(id, value);
+      for (const { id, value, detail } of parsed.ok) detail ? inv.setDetail(id, detail) : inv.setCount(id, value);
       inv.flush();
       const list = (a) => a.slice(0, 25).map((e) => `${cards.clean(e.name, 30)} (${e.value})`).join(', ');
       let out = `✅ ${parsed.ok.length} membre(s) importé(s).`;
