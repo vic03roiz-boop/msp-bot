@@ -4,6 +4,7 @@
 // Variables Railway (toutes facultatives sauf GUILD_ID, déjà présent) :
 //   WELCOME_CHANNEL_ID        salon de bienvenue (sinon le salon système du serveur)
 //   WELCOME_RULES_CHANNEL_ID, WELCOME_ROLES_CHANNEL_ID, WELCOME_ROLES_MSP_CHANNEL_ID, WELCOME_PSEUDOS_CHANNEL_ID, WELCOME_CHAT_CHANNEL_ID : salons cités dans le message (une ligne sans salon est omise)
+//   INVITE_LOG_CHANNEL_ID     salon admin du journal des invitations (« X vient d'arriver, invité par Y » / « X est parti »). Vide = désactivé
 //   LEAVE_CHANNEL_ID          salon du message « au revoir » quand quelqu'un quitte (sinon le salon de bienvenue)
 //   BOOST_CHANNEL_ID          salon du message « merci pour le boost » (sinon le salon de bienvenue)
 //   WELCOME_BANNER_URL        lien d'une image de fond (sinon assets/banniere.png, sinon dégradé de la saison)
@@ -19,6 +20,7 @@ const { Events, SlashCommandBuilder, PermissionFlagsBits, AttachmentBuilder, Emb
 const levels = require('./levels');
 const cards = require('./cards');
 const welcome = require('./welcome');
+const invitelog = require('./invitelog');
 
 const EPHEMERAL = 64;
 const GUILD_ID = () => process.env.GUILD_ID || '';
@@ -201,9 +203,11 @@ function init(client) {
       if (i.isChatInputCommand() && ['rang', 'classement', 'niveaux'].includes(i.commandName) && i.guild?.id === GUILD_ID()) run(i).catch((e) => console.error('[niveaux]', e));
     });
   }
+  const inv = invitelog.register(client);
   const start = async () => {
     const guild = client.guilds.cache.get(GUILD_ID());
     if (!guild) return console.error('[niveaux] GUILD_ID introuvable : vérifie la variable GUILD_ID');
+    await inv.init(guild);
     if (ownRegistration) for (const d of DEFS) await guild.commands.create(d.toJSON()).catch(() => {});
     levels.backupIfNeeded();
     console.log('[niveaux] 🏆 niveaux et bienvenue prêts');
