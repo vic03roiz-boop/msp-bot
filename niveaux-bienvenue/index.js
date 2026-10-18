@@ -4,6 +4,7 @@
 // Variables Railway (toutes facultatives sauf GUILD_ID, déjà présent) :
 //   WELCOME_CHANNEL_ID        salon de bienvenue (sinon le salon système du serveur)
 //   WELCOME_RULES_CHANNEL_ID, WELCOME_ROLES_CHANNEL_ID, WELCOME_ROLES_MSP_CHANNEL_ID, WELCOME_PSEUDOS_CHANNEL_ID, WELCOME_CHAT_CHANNEL_ID : salons cités dans le message (une ligne sans salon est omise)
+//   LEAVE_CHANNEL_ID          salon du message « au revoir » quand quelqu'un quitte (sinon le salon de bienvenue)
 //   BOOST_CHANNEL_ID          salon du message « merci pour le boost » (sinon le salon de bienvenue)
 //   WELCOME_BANNER_URL        lien d'une image de fond (sinon assets/banniere.png, sinon dégradé de la saison)
 //   WELCOME_USE_SERVER_BANNER true : reprendre la bannière du serveur comme fond (désactivé par défaut)
@@ -44,6 +45,7 @@ const DEFS = [
       .addAttachmentOption((o) => o.setName('fichier').setDescription('Fichier .txt ou .csv').setRequired(true))
       .addStringOption((o) => o.setName('type').setDescription('Ce que contient la 2e colonne').addChoices({ name: 'Niveau (par défaut)', value: 'niveau' }, { name: 'XP total', value: 'xp' })))
     .addSubcommand((s) => s.setName('apercu-bienvenue').setDescription('Voir l’image de bienvenue avec ton profil'))
+    .addSubcommand((s) => s.setName('apercu-depart').setDescription('Voir le message d’au revoir avec ton profil'))
     .addSubcommand((s) => s.setName('apercu-boost').setDescription('Voir le message de remerciement pour un boost avec ton profil')),
 ];
 
@@ -67,6 +69,11 @@ async function welcomeFor(member) {
 async function boostFor(member) {
   const buf = await cards.boostCard({ name: member.displayName, avatarUrl: await avatarOf(member.user), serverName: member.guild.name, theme: THEME() });
   return new AttachmentBuilder(buf, { name: 'boost.png' });
+}
+
+async function leaveFor(user, guild) {
+  const buf = await cards.leaveCard({ name: user.globalName || user.username, avatarUrl: await avatarOf(user), serverName: guild.name, theme: THEME() });
+  return new AttachmentBuilder(buf, { name: 'depart.png' });
 }
 
 async function run(i) {
@@ -117,6 +124,10 @@ async function run(i) {
       if (res?.missing.length) out += `\n❓ Pseudo introuvable sur le serveur (parti ou pseudo changé) : ${list(res.missing)}`;
       if (parsed.bad.length) out += `\n⚠️ ${parsed.bad.length} ligne(s) illisible(s), par exemple : \`${parsed.bad.slice(0, 3).join('` · `')}\``;
       return i.editReply(out.slice(0, 1900));
+    }
+    if (sub === 'apercu-depart') {
+      await i.deferReply({ flags: EPHEMERAL });
+      return i.editReply({ ...welcome.buildLeave(THEME(), `<@${i.user.id}>`, i.guild.name), files: [await leaveFor(i.user, i.guild)], allowedMentions: { parse: [] } });
     }
     if (sub === 'apercu-boost') {
       await i.deferReply({ flags: EPHEMERAL });
@@ -172,7 +183,17 @@ function init(client) {
     } catch (e) { console.error('[boost]', e.message); }
   });
 
-  client.on(Events.GuildMemberRemove, (m) => { if (m.guild.id === GUILD_ID() && flag('LEVELS_RESET_ON_LEAVE', false)) levels.forget(m.id); });
+  // Départ : message d'au revoir + (si activé) remise à zéro de l'XP
+  client.on(Events.GuildMemberRemove, async (m) => {
+    try {
+      if (m.guild.id !== GUILD_ID() || m.user?.bot) return;
+      if (flag('LEVELS_RESET_ON_LEAVE', false)) levels.forget(m.id);
+      const id = process.env.LEAVE_CHANNEL_ID || process.env.WELCOME_CHANNEL_ID || m.guild.systemChannelId || '0';
+      const ch = await client.channels.fetch(id).catch(() => null);
+      if (!ch?.isTextBased()) return;
+      await ch.send({ ...welcome.buildLeave(THEME(), `<@${m.id}>`, m.guild.name), files: [await leaveFor(m.user, m.guild)], allowedMentions: { parse: [] } });
+    } catch (e) { console.error('[depart]', e.message); }
+  });
   client.on(Events.GuildBanAdd, (b) => { if (b.guild.id === GUILD_ID() && flag('LEVELS_RESET_ON_BAN', true)) levels.forget(b.user.id); });
 
   if (ownRegistration) {

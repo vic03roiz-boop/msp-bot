@@ -38,4 +38,15 @@ function buildBoost(themeName, mention) {
   return { content: `⋆｡°ʚɞ°｡⋆ Merci ${mention} ⋆｡°ʚɞ°｡⋆`, embeds: [embed] };
 }
 
-module.exports = { build, buildBoost };
+/** Message de départ, même style que la bienvenue. */
+function buildLeave(themeName, mention, serverName) {
+  const T = themes.get(themeName);
+  const e = T.title[0];
+  const name = `${e} .˚ ~ **${names.serverName(serverName)}** ~ ˚. ${e}`;
+  const embed = new EmbedBuilder().setColor(parseInt(T.accent.slice(1), 16)).setImage('attachment://depart.png')
+    .setDescription([`**𝑨𝒖 𝒓𝒆𝒗𝒐𝒊𝒓**`, '', DECO, '', `${mention} a quitté ${name}.`, 'On lui souhaite un bon voyage.', '', SPARK, '',
+      '♡ Nous sommes navrés que le serveur ne t’ait pas plu, prends soin de toi ♡', '', DECO].join('\n'));
+  return { content: `⋆｡°ʚɞ°｡⋆ Bye ${mention} ⋆｡°ʚɞ°｡⋆`, embeds: [embed] };
+}
+
+module.exports = { build, buildBoost, buildLeave };

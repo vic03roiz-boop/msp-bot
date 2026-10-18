@@ -115,4 +115,17 @@ async function boostCard({ name, avatarUrl, serverName, theme }) {
   return canvas.toBuffer('image/png');
 }
 
-module.exports = { boostCard, levelUpCard, getTheme, rankCard, welcomeCard, clean, nf };
+/** Image « au revoir » 1000 x 360. */
+async function leaveCard({ name, avatarUrl, serverName, theme }) {
+  const T = getTheme(theme);
+  const W = 1000, H = 360, canvas = createCanvas(W, H), g = canvas.getContext('2d');
+  gradient(g, W, H, T);
+  decor(g, W, H, T, false, true);
+  circleImage(g, await fetchImage(avatarUrl), W / 2, 118, 70, clean(name)[0], T);
+  g.textAlign = 'center'; g.fillStyle = T.accent; g.font = '22px CardSansBold, CardEmoji'; g.fillText('👋 AU REVOIR ' + T.title[1], W / 2, 232);
+  g.fillStyle = T.text; g.font = '38px CardSansBold, CardEmoji'; g.fillText(clean(name, 26), W / 2, 280);
+  g.fillStyle = T.mute; g.font = '19px CardSans, CardEmoji'; g.fillText(`a quitté ${clean(names.serverName(serverName), 30)} · bon voyage`, W / 2, 316);
+  return canvas.toBuffer('image/png');
+}
+
+module.exports = { leaveCard, boostCard, levelUpCard, getTheme, rankCard, welcomeCard, clean, nf };
