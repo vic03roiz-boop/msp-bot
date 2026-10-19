@@ -20,10 +20,7 @@ const ACT = { custom: ActivityType.Custom, stream: ActivityType.Streaming, play:
 const DEFAUT = [
   { mode: 'online', type: 'custom', text: '{saison} Bloomeria · tape /aide' },
   { mode: 'online', type: 'stream', text: 'Bloomeria {saison}' },
-  { mode: 'idle', type: 'custom', text: '🌙 Je veille sur {membres} membres' },
-  { mode: 'online', type: 'watch', text: 'les {membres} membres' },
-  { mode: 'online', type: 'custom', text: '🎁 Des surprises arrivent…' },
-  { mode: 'online', type: 'listen', text: 'vos idées 💡' },
+  { mode: 'idle', type: 'custom', text: '🌙 Douce nuit sur Bloomeria ✨' },
 ];
 let db = { list: DEFAUT, pause: false };
 try { const d = JSON.parse(fs.readFileSync(FILE, 'utf8')); if (Array.isArray(d.list) && d.list.length) db = { ...db, ...d }; } catch {}

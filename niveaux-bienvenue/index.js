@@ -28,6 +28,7 @@ const logs = require('./logs');
 const aide = require('./aide');
 const automod = require('./automod');
 const statut = require('./statut');
+const rappels = require('./rappels');
 const avent = require('./avent');
 
 const EPHEMERAL = 64;
@@ -213,9 +214,9 @@ async function run(i) {
 
 function init(client) {
   const ownRegistration = !client.commands;
-  if (client.commands) { for (const d of DEFS) client.commands.set(d.name, { data: d, execute: run }); for (const d of annonces.defs) client.commands.set(d.name, { data: d, execute: annonces.run }); for (const d of moderation.defs) client.commands.set(d.name, { data: d, execute: moderation.run }); for (const d of logs.defs) client.commands.set(d.name, { data: d, execute: logs.run }); for (const d of aide.defs) client.commands.set(d.name, { data: d, execute: (i) => aide.run(i) }); for (const d of automod.defs) client.commands.set(d.name, { data: d, execute: automod.run }); for (const d of statut.defs) client.commands.set(d.name, { data: d, execute: statut.run }); }
+  if (client.commands) { for (const d of DEFS) client.commands.set(d.name, { data: d, execute: run }); for (const d of annonces.defs) client.commands.set(d.name, { data: d, execute: annonces.run }); for (const d of moderation.defs) client.commands.set(d.name, { data: d, execute: moderation.run }); for (const d of logs.defs) client.commands.set(d.name, { data: d, execute: logs.run }); for (const d of aide.defs) client.commands.set(d.name, { data: d, execute: (i) => aide.run(i) }); for (const d of automod.defs) client.commands.set(d.name, { data: d, execute: automod.run }); for (const d of statut.defs) client.commands.set(d.name, { data: d, execute: statut.run }); for (const d of rappels.defs) client.commands.set(d.name, { data: d, execute: (i) => rappels.run(i, client) }); }
   for (const d of avent.defs) if (client.commands) client.commands.set(d.name, { data: d, execute: avent.run });
-  annonces.register(client); avent.register(client); moderation.register(client); logs.register(client); aide.register(client); automod.register(client); statut.register(client);
+  annonces.register(client); avent.register(client); moderation.register(client); logs.register(client); aide.register(client); automod.register(client); statut.register(client); rappels.register(client);
 
   client.on(Events.MessageCreate, async (msg) => {
     try {
@@ -274,7 +275,8 @@ function init(client) {
       if (i.isChatInputCommand() && logs.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) logs.run(i).catch((e) => console.error('[logs]', e));
       if (i.isChatInputCommand() && automod.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) automod.run(i).catch((e) => console.error('[automod]', e));
       if (i.isChatInputCommand() && statut.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) statut.run(i).catch((e) => console.error('[statut]', e));
-      if (i.isChatInputCommand() && aide.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) aide.run(i, () => [...DEFS, ...annonces.defs, ...avent.defs, ...moderation.defs, ...logs.defs, ...aide.defs, ...automod.defs, ...statut.defs]).catch((e) => console.error('[aide]', e));
+      if (i.isChatInputCommand() && rappels.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) rappels.run(i, client).catch((e) => console.error('[rappels]', e));
+      if (i.isChatInputCommand() && aide.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) aide.run(i, () => [...DEFS, ...annonces.defs, ...avent.defs, ...moderation.defs, ...logs.defs, ...aide.defs, ...automod.defs, ...statut.defs, ...rappels.defs]).catch((e) => console.error('[aide]', e));
       if (i.isChatInputCommand() && ['rang', 'classement', 'niveaux', 'invites'].includes(i.commandName) && i.guild?.id === GUILD_ID()) run(i).catch((e) => console.error('[niveaux]', e));
     });
   }
@@ -283,7 +285,7 @@ function init(client) {
     const guild = client.guilds.cache.get(GUILD_ID());
     if (!guild) return console.error('[niveaux] GUILD_ID introuvable : vérifie la variable GUILD_ID');
     await inv.init(guild);
-    if (ownRegistration) for (const d of [...DEFS, ...annonces.defs, ...avent.defs, ...moderation.defs, ...logs.defs, ...aide.defs, ...automod.defs, ...statut.defs]) await guild.commands.create(d.toJSON()).catch(() => {});
+    if (ownRegistration) for (const d of [...DEFS, ...annonces.defs, ...avent.defs, ...moderation.defs, ...logs.defs, ...aide.defs, ...automod.defs, ...statut.defs, ...rappels.defs]) await guild.commands.create(d.toJSON()).catch(() => {});
     levels.backupIfNeeded();
     console.log('[niveaux] 🏆 niveaux et bienvenue prêts');
   };

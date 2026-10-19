@@ -15,7 +15,7 @@ const CATS = [
   ['🎫 Tickets', /ticket/],
   ['📊 Infos', /^(stats|aide|serveur|info)/],
 ];
-const STAFF_RE = /^(statut|automod|niveaux|config|creer|reroll|blacklist|menu|avent-|annonce|logs-|mod-|avertir|muet|historique|tickets-ouverts|stats-config|apercu)/;
+const STAFF_RE = /^(rappel|statut|automod|niveaux|config|creer|reroll|blacklist|menu|avent-|annonce|logs-|mod-|avertir|muet|historique|tickets-ouverts|stats-config|apercu)/;
 
 const clean = (d) => (d || '').replace(/^\(Staff\)\s*/i, '');
 function usage(json) {
