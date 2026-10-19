@@ -46,7 +46,8 @@ const ts = (t) => `<t:${Math.floor(t / 1000)}:d>`;
 const fmtMin = (m) => (m >= 1440 ? `${m / 1440} j` : m >= 60 ? `${m / 60} h` : `${m} min`);
 
 async function logStaff(client, embed) {
-  const id = process.env.MOD_LOG_CHANNEL_ID;
+  let id = process.env.MOD_LOG_CHANNEL_ID;
+  if (!id) { try { id = require('./logs').chanFor('moderation'); } catch {} }
   if (!id) return;
   const ch = await client.channels.fetch(id).catch(() => null);
   ch?.isTextBased() && ch.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => {});
@@ -72,7 +73,23 @@ function verifier(i, member, user) {
 }
 async function mute(i, member, minutes, reason) {
   const ms = Math.min(minutes * 60000, MAX_TIMEOUT);
-  await member.timeout(ms, `${reason || 'Sourdine'} (par ${i.user.tag})`);
+  await member.timeout(ms, `${reason || 'Sourdine'} (par ${i?.user?.tag || 'automod'})`);
+}
+/** Avertissement automatique (automodération) : noté dans l'historique, MP, log staff, sourdine si le seuil est atteint. */
+async function avertirAuto(client, member, reason) {
+  const c = { id: db.next++, userId: member.id, type: 'avertir', modId: null, reason, ts: Date.now() }; db.cases.push(c); save();
+  const n = actifs(member.id), seuil = parseInt(process.env.MOD_SEUIL_MUTE, 10) || 0;
+  dm(member.user, `Avertissement sur ${member.guild.name}`, [`**Raison :** ${reason}`, '', `Tu as **${n}** avertissement${n > 1 ? 's' : ''}. Merci de respecter le règlement du serveur.`], 0xF2C14E);
+  await logStaff(client, logEmbed(c, member.id, null).setTitle(`🤖 Avertissement automatique · cas n°${c.id}`));
+  if (seuil && n >= seuil && n % seuil === 0) {
+    const min = parseInt(process.env.MOD_AUTO_MUTE_MIN, 10) || 60;
+    try {
+      await mute(null, member, min, `${n} avertissements`);
+      const a = { id: db.next++, userId: member.id, type: 'auto-muet', modId: null, reason: `${n} avertissements atteints`, minutes: min, ts: Date.now() }; db.cases.push(a); save();
+      await logStaff(client, logEmbed(a, member.id, null));
+    } catch {}
+  }
+  return c;
 }
 
 async function run(i) {
@@ -151,4 +168,4 @@ async function run(i) {
 }
 
 function register() { /* rien à écouter : tout passe par les commandes */ }
-module.exports = { defs, NAMES, run, register };
+module.exports = { defs, NAMES, run, register, avertirAuto, logStaff };

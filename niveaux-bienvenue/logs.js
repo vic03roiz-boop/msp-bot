@@ -329,4 +329,4 @@ function register(client) {
   client.on(Events.InviteDelete, (inv) => { if (ok(inv.guild)) L('serveur', emb(COL.rouge, 'Invitation supprimée', null, `**${inv.code}** (<#${inv.channelId}>)`)); });
 }
 
-module.exports = { defs, NAMES, run, register };
+module.exports = { defs, NAMES, run, register, chanFor };
