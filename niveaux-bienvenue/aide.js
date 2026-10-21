@@ -13,9 +13,10 @@ const CATS = [
   ['🍬 Bonbons & récompenses', /^(solde|recompenses|boutique|autographes|bonbons)$/],
   ['🎮 Jeux & concours', /(uno|pendu|drop|roue|wheel|jeu|gw|giveaway|reroll)/],
   ['🎫 Tickets', /ticket/],
+  ['🛡️ Sécurité', /^verifier$/],
   ['📊 Infos', /^(stats|aide|serveur|info)/],
 ];
-const STAFF_RE = /^(rappel|statut|automod|niveaux|config|creer|reroll|blacklist|menu|avent-|annonce|logs-|mod-|avertir|muet|historique|tickets-ouverts|stats-config|apercu)/;
+const STAFF_RE = /^(scammer|rappel|statut|automod|niveaux|config|creer|reroll|blacklist|menu|avent-|annonce|logs-|mod-|avertir|muet|historique|tickets-ouverts|stats-config|apercu)/;
 
 const clean = (d) => (d || '').replace(/^\(Staff\)\s*/i, '');
 function usage(json) {
