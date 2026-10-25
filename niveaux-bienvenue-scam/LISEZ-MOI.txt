@@ -1,0 +1,29 @@
+MISE À JOUR : liste des arnaqueurs + annonces de niveau
+=======================================================
+
+À FAIRE (2 fichiers, dans le dossier niveaux-bienvenue de ton GitHub) :
+  1. Ajoute   niveaux-bienvenue/scammers.js   (nouveau fichier)
+  2. Remplace niveaux-bienvenue/index.js      (par celui de ce zip)
+  Rien d'autre à toucher. Puis Railway redéploie tout seul.
+
+APRÈS LE DÉPLOIEMENT, dans Discord :
+
+  ANNONCES DE NIVEAU (plus besoin de variable Railway)
+    /niveaux annonces-salon salon:#ton-salon   -> choisit le salon
+    /niveaux annonces-test                     -> envoie une fausse annonce (te dit pourquoi si ça ne marche pas)
+    /niveaux annonces-off                      -> arrête les annonces
+  Si tu as déjà la variable LEVELS_ANNOUNCE_CHANNEL_ID, elle sert de secours ;
+  la commande a toujours la priorité.
+
+  LISTE DES ARNAQUEURS
+    Membres :  /verifier-scam pseudo:xxx     ou   /verifier-scam membre:@xxx
+               (la réponse est visible uniquement par la personne qui tape la commande)
+    Staff   :  /scam ajouter   -> un formulaire s'ouvre, le staff remplit à la main
+               /scam modifier  -> choisis la fiche en tapant son pseudo
+               /scam retirer   -> demande confirmation
+               /scam liste     -> toutes les fiches
+               /scam salon     -> (facultatif) publie aussi chaque fiche dans un salon
+    Les commandes /scam sont réservées à « Gérer les messages ».
+    Pour donner l'accès à un rôle staff précis : variable SCAM_STAFF_ROLE_IDS (ids séparés par des virgules).
+
+Les fiches sont enregistrées sur le volume Railway (scammers.json) avec une sauvegarde par jour.
