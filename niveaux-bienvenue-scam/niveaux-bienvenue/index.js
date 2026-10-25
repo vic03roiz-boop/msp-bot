@@ -285,6 +285,22 @@ function init(client) {
   client.on(Events.MessageCreate, async (msg) => {
     try {
       if (!msg.guild || msg.guild.id !== GUILD_ID() || msg.author.bot || msg.webhookId) return;
+      // Secours sans commande slash : le staff (« Gérer le serveur ») tape ça dans un salon
+      const txt = (msg.content || '').trim().toLowerCase();
+      if (['!niveaux-ici', '!niveaux-test', '!niveaux-off'].includes(txt)) {
+        if (!msg.member?.permissions?.has(PermissionFlagsBits.ManageGuild)) return;
+        if (txt === '!niveaux-off') { delete settings.announceChannelId; saveSettings(); return void msg.reply('Les annonces de niveau sont arrêtées.').catch(() => {}); }
+        if (txt === '!niveaux-ici') { settings.announceChannelId = msg.channel.id; saveSettings(); }
+        const id = announceId();
+        const ch = id ? await client.channels.fetch(id).catch(() => null) : null;
+        if (!ch?.isTextBased()) return void msg.reply('Aucun salon valide : tape `!niveaux-ici` dans le salon où tu veux les annonces.').catch(() => {});
+        try {
+          await sendLevelUp(ch, msg.author, msg.member?.displayName || msg.author.username, 4, 5);
+          if (ch.id !== msg.channel.id) msg.reply(`✅ Annonce de test envoyée dans <#${ch.id}>.`).catch(() => {});
+          else if (txt === '!niveaux-ici') msg.channel.send('✅ Les passages de niveau seront annoncés **dans ce salon** (voilà un exemple ci-dessus).').catch(() => {});
+        } catch (e) { msg.reply(`❌ Je n'arrive pas à écrire dans <#${ch.id}> : ${e.message}`).catch(() => {}); }
+        return;
+      }
       if (excluded().includes(msg.channel.id)) return;
       const r = levels.onMessage(msg.author.id, (msg.content || '').trim().length, msg.createdTimestamp);
       const announce = announceId();
@@ -350,7 +366,7 @@ function init(client) {
     if (ownRegistration) for (const d of [...DEFS, ...annonces.defs, ...avent.defs, ...moderation.defs, ...logs.defs, ...aide.defs, ...automod.defs, ...scammers.defs]) await guild.commands.create(d.toJSON()).catch(() => {});
     levels.backupIfNeeded();
     console.log('[niveaux] 🏆 niveaux et bienvenue prêts');
-    console.log(announceId() ? `[niveaux] annonces de niveau dans le salon ${announceId()}` : '[niveaux] ⚠️ aucun salon d’annonces de niveau : tape /annonces-niveaux salon dans Discord');
+    console.log(announceId() ? `[niveaux] annonces de niveau dans le salon ${announceId()}` : '[niveaux] ⚠️ aucun salon d’annonces de niveau : tape /annonces-niveaux salon (ou !niveaux-ici dans le salon voulu)');
   };
   if (client.isReady()) start(); else client.once(Events.ClientReady, start);
 }

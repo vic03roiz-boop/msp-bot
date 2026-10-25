@@ -30,3 +30,9 @@ Les fiches sont enregistrées sur le volume Railway (scammers.json) avec une sau
 
 NOTE : les anciennes sous-commandes « /niveaux annonces-* » existent toujours, mais Discord peut mettre du temps à les afficher.
 Utilise plutôt la commande séparée /annonces-niveaux (salon / test / off), qui apparaît tout de suite.
+
+SECOURS SANS COMMANDE SLASH (marche même si Discord n'affiche pas les commandes) :
+  Dans le salon où tu veux les annonces de niveau, tape simplement :   !niveaux-ici
+  -> le bot retient ce salon et envoie une fausse annonce pour te montrer.
+  !niveaux-test  = refaire un test       !niveaux-off  = arrêter
+  (réservé à ceux qui ont « Gérer le serveur »)
