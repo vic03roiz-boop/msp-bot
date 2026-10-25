@@ -10,7 +10,7 @@
 //   WELCOME_BANNER_URL        lien d'une image de fond (sinon assets/banniere.png, sinon dégradé de la saison)
 //   WELCOME_USE_SERVER_BANNER true : reprendre la bannière du serveur comme fond (désactivé par défaut)
 //   ANNONCE_CHANNEL_ID, ANNONCE_ROLE_ID  /annonce-msp : salon et rôle pingé par défaut (facultatif, sinon choisis-les dans la commande)
-//   LEVELS_ANNOUNCE_CHANNEL_ID  salon où annoncer les passages de niveau. Plus besoin de le mettre ici : tape /niveaux annonces-salon dans Discord (la commande a la priorité)
+//   LEVELS_ANNOUNCE_CHANNEL_ID  salon où annoncer les passages de niveau. Plus besoin de le mettre ici : tape /annonces-niveaux salon dans Discord (la commande a la priorité)
 //   LEVELS_THEME                facultatif : force la saison (halloween | automne | noel | hiver). Sinon elle change toute seule avec la date
 //   LEVELS_MESSAGE              facultatif : ton propre message de passage de niveau ({user} et {level})
 //   LEVELS_VIEW_OTHERS          true (défaut) : les membres peuvent voir le niveau des autres ; false pour l'interdire
@@ -59,6 +59,12 @@ const DEFS = [
   new SlashCommandBuilder().setName('invites').setDescription('Voir ton nombre d’invitations')
     .addUserOption((o) => o.setName('membre').setDescription('Voir celui d’un autre membre')),
   new SlashCommandBuilder().setName('classement').setDescription('Le top 10 des niveaux du serveur'),
+  new SlashCommandBuilder().setName('annonces-niveaux').setDescription('(Staff) Régler les annonces de passage de niveau')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand((s) => s.setName('salon').setDescription('Choisir le salon où le bot annonce les passages de niveau')
+      .addChannelOption((o) => o.setName('salon').setDescription('Salon des annonces de niveau').addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement).setRequired(true)))
+    .addSubcommand((s) => s.setName('test').setDescription('Envoyer une fausse annonce de niveau pour vérifier que tout marche'))
+    .addSubcommand((s) => s.setName('off').setDescription('Arrêter les annonces de niveau')),
   new SlashCommandBuilder().setName('niveaux').setDescription('(Staff) Gérer les niveaux et la bienvenue')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addSubcommand((s) => s.setName('definir').setDescription('Fixer le niveau d’un membre')
@@ -118,8 +124,42 @@ async function sendLevelUp(ch, user, displayName, from, to) {
   return ch.send({ content: themes.levelMessage(THEME(), `<@${user.id}>`, to), files, allowedMentions: { users: [user.id] } });
 }
 
+/** /annonces-niveaux salon | test | off (et les mêmes sous-commandes de /niveaux). */
+async function annoncesCmd(i, sub) {
+  if (sub === 'salon') {
+    const ch = i.options.getChannel('salon');
+    settings.announceChannelId = ch.id; saveSettings();
+    const me = ch.permissionsFor?.(i.guild.members.me);
+    const missing = me ? [['ViewChannel', 'voir le salon'], ['SendMessages', 'envoyer des messages'], ['AttachFiles', 'joindre des fichiers']].filter(([f]) => !me.has(PermissionFlagsBits[f])).map(([, t]) => t) : [];
+    return i.reply({ content: `✅ Les passages de niveau seront annoncés dans <#${ch.id}>.${missing.length ? `\n⚠️ Il manque au bot ces droits dans ce salon : **${missing.join(', ')}**. Ajoute-les sinon rien ne s’affichera.` : ''}\nTape \`/annonces-niveaux test\` pour vérifier.`, flags: EPHEMERAL });
+  }
+  if (sub === 'off') {
+    delete settings.announceChannelId; saveSettings();
+    const env = (process.env.LEVELS_ANNOUNCE_CHANNEL_ID || '').trim();
+    return i.reply({ content: env ? `Salon réglé par commande retiré, mais la variable Railway LEVELS_ANNOUNCE_CHANNEL_ID (<#${env}>) est encore remplie : vide-la aussi pour tout arrêter.` : 'Les annonces de niveau sont arrêtées.', flags: EPHEMERAL });
+  }
+  if (sub === 'test') {
+    await i.deferReply({ flags: EPHEMERAL });
+    const id = announceId();
+    if (!id) return i.editReply('Aucun salon n’est réglé : tape d’abord `/annonces-niveaux salon`.');
+    const ch = await i.client.channels.fetch(id).catch(() => null);
+    if (!ch?.isTextBased()) return i.editReply(`Je ne trouve pas le salon <#${id}> (supprimé, ou je n’y ai pas accès). Choisis-en un autre avec \`/annonces-niveaux salon\`.`);
+    try {
+      const member = await i.guild.members.fetch(i.user.id).catch(() => null);
+      await sendLevelUp(ch, i.user, member?.displayName || i.user.username, 4, 5);
+      return i.editReply(`✅ Annonce de test envoyée dans <#${id}>. Si tu l’y vois, les vraies annonces fonctionneront aussi.`);
+    } catch (e) {
+      return i.editReply(`❌ Impossible d’écrire dans <#${id}> : ${e.message}\nVérifie que le bot peut **voir le salon, envoyer des messages et joindre des fichiers**.`);
+    }
+  }
+}
+
 async function run(i) {
   const name = i.commandName;
+  if (name === 'annonces-niveaux') {
+    if (!staffOk(i)) return i.reply({ content: 'Commande réservée au staff 🔒', flags: EPHEMERAL });
+    return annoncesCmd(i, i.options.getSubcommand());
+  }
   if (name === 'rang') {
     await i.deferReply();
     const user = i.options.getUser('membre') || i.user;
@@ -217,32 +257,7 @@ async function run(i) {
       if (res?.missing.length) out += `\n❓ Pseudo introuvable sur le serveur (parti ou pseudo changé) : ${list(res.missing)}`;
       return i.editReply(out.slice(0, 1900));
     }
-    if (sub === 'annonces-salon') {
-      const ch = i.options.getChannel('salon');
-      settings.announceChannelId = ch.id; saveSettings();
-      const me = ch.permissionsFor?.(i.guild.members.me);
-      const missing = me ? [['ViewChannel', 'voir le salon'], ['SendMessages', 'envoyer des messages'], ['AttachFiles', 'joindre des fichiers']].filter(([f]) => !me.has(PermissionFlagsBits[f])).map(([, t]) => t) : [];
-      return i.reply({ content: `✅ Les passages de niveau seront annoncés dans <#${ch.id}>.${missing.length ? `\n⚠️ Il manque au bot ces droits dans ce salon : **${missing.join(', ')}**. Ajoute-les sinon rien ne s’affichera.` : ''}\nTape \`/niveaux annonces-test\` pour vérifier.`, flags: EPHEMERAL });
-    }
-    if (sub === 'annonces-off') {
-      delete settings.announceChannelId; saveSettings();
-      const env = (process.env.LEVELS_ANNOUNCE_CHANNEL_ID || '').trim();
-      return i.reply({ content: env ? `Salon réglé par commande retiré, mais la variable Railway LEVELS_ANNOUNCE_CHANNEL_ID (<#${env}>) est encore remplie : vide-la aussi pour tout arrêter.` : 'Les annonces de niveau sont arrêtées.', flags: EPHEMERAL });
-    }
-    if (sub === 'annonces-test') {
-      await i.deferReply({ flags: EPHEMERAL });
-      const id = announceId();
-      if (!id) return i.editReply('Aucun salon n’est réglé : tape d’abord `/niveaux annonces-salon`.');
-      const ch = await i.client.channels.fetch(id).catch(() => null);
-      if (!ch?.isTextBased()) return i.editReply(`Je ne trouve pas le salon <#${id}> (supprimé, ou je n’y ai pas accès). Choisis-en un autre avec \`/niveaux annonces-salon\`.`);
-      try {
-        const member = await i.guild.members.fetch(i.user.id).catch(() => null);
-        await sendLevelUp(ch, i.user, member?.displayName || i.user.username, 4, 5);
-        return i.editReply(`✅ Annonce de test envoyée dans <#${id}>. Si tu l’y vois, les vraies annonces fonctionneront aussi.`);
-      } catch (e) {
-        return i.editReply(`❌ Impossible d’écrire dans <#${id}> : ${e.message}\nVérifie que le bot peut **voir le salon, envoyer des messages et joindre des fichiers**.`);
-      }
-    }
+    if (sub.startsWith('annonces-')) return annoncesCmd(i, sub.slice(9));
     if (sub === 'apercu-depart') {
       await i.deferReply({ flags: EPHEMERAL });
       return i.editReply({ ...welcome.buildLeave(THEME(), `<@${i.user.id}>`, i.guild.name), files: [await leaveFor(i.user, i.guild)], allowedMentions: { parse: [] } });
@@ -275,7 +290,7 @@ function init(client) {
       const announce = announceId();
       if (r && r.to > r.from && announce) {
         const ch = await client.channels.fetch(announce).catch(() => null);
-        if (!ch?.isTextBased()) return console.error(`[niveaux] salon d'annonces ${announce} introuvable : refais /niveaux annonces-salon`);
+        if (!ch?.isTextBased()) return console.error(`[niveaux] salon d'annonces ${announce} introuvable : refais /annonces-niveaux salon`);
         await sendLevelUp(ch, msg.author, msg.member?.displayName || msg.author.username, r.from, r.to)
           .catch((e) => console.error(`[niveaux] annonce impossible dans ${announce} :`, e.message));
       }
@@ -324,7 +339,7 @@ function init(client) {
       if (i.isChatInputCommand() && automod.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) automod.run(i).catch((e) => console.error('[automod]', e));
       if (i.isChatInputCommand() && scammers.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) scammers.run(i).catch((e) => console.error('[scam]', e));
       if (i.isChatInputCommand() && aide.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) aide.run(i, () => [...DEFS, ...annonces.defs, ...avent.defs, ...moderation.defs, ...logs.defs, ...aide.defs, ...automod.defs, ...scammers.defs]).catch((e) => console.error('[aide]', e));
-      if (i.isChatInputCommand() && ['rang', 'classement', 'niveaux', 'invites'].includes(i.commandName) && i.guild?.id === GUILD_ID()) run(i).catch((e) => console.error('[niveaux]', e));
+      if (i.isChatInputCommand() && ['rang', 'classement', 'niveaux', 'invites', 'annonces-niveaux'].includes(i.commandName) && i.guild?.id === GUILD_ID()) run(i).catch((e) => console.error('[niveaux]', e));
     });
   }
   inv = invitelog.register(client);
@@ -335,7 +350,7 @@ function init(client) {
     if (ownRegistration) for (const d of [...DEFS, ...annonces.defs, ...avent.defs, ...moderation.defs, ...logs.defs, ...aide.defs, ...automod.defs, ...scammers.defs]) await guild.commands.create(d.toJSON()).catch(() => {});
     levels.backupIfNeeded();
     console.log('[niveaux] 🏆 niveaux et bienvenue prêts');
-    console.log(announceId() ? `[niveaux] annonces de niveau dans le salon ${announceId()}` : '[niveaux] ⚠️ aucun salon d’annonces de niveau : tape /niveaux annonces-salon dans Discord');
+    console.log(announceId() ? `[niveaux] annonces de niveau dans le salon ${announceId()}` : '[niveaux] ⚠️ aucun salon d’annonces de niveau : tape /annonces-niveaux salon dans Discord');
   };
   if (client.isReady()) start(); else client.once(Events.ClientReady, start);
 }

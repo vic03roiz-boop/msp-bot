@@ -9,9 +9,9 @@ MISE À JOUR : liste des arnaqueurs + annonces de niveau
 APRÈS LE DÉPLOIEMENT, dans Discord :
 
   ANNONCES DE NIVEAU (plus besoin de variable Railway)
-    /niveaux annonces-salon salon:#ton-salon   -> choisit le salon
-    /niveaux annonces-test                     -> envoie une fausse annonce (te dit pourquoi si ça ne marche pas)
-    /niveaux annonces-off                      -> arrête les annonces
+    /annonces-niveaux salon salon:#ton-salon   -> choisit le salon
+    /annonces-niveaux test                      -> envoie une fausse annonce (te dit pourquoi si ça ne marche pas)
+    /annonces-niveaux off                       -> arrête les annonces
   Si tu as déjà la variable LEVELS_ANNOUNCE_CHANNEL_ID, elle sert de secours ;
   la commande a toujours la priorité.
 
@@ -27,3 +27,6 @@ APRÈS LE DÉPLOIEMENT, dans Discord :
     Pour donner l'accès à un rôle staff précis : variable SCAM_STAFF_ROLE_IDS (ids séparés par des virgules).
 
 Les fiches sont enregistrées sur le volume Railway (scammers.json) avec une sauvegarde par jour.
+
+NOTE : les anciennes sous-commandes « /niveaux annonces-* » existent toujours, mais Discord peut mettre du temps à les afficher.
+Utilise plutôt la commande séparée /annonces-niveaux (salon / test / off), qui apparaît tout de suite.
