@@ -1,1119 +1,374 @@
-require('dotenv').config();
+// Niveaux + cartes de rang + bienvenue en image.
+//   const niveaux = require('./niveaux-bienvenue');
+//   niveaux.init(client);   // UNE fois, après stats-serveur
+// Variables Railway (toutes facultatives sauf GUILD_ID, déjà présent) :
+//   WELCOME_CHANNEL_ID        salon de bienvenue (sinon le salon système du serveur)
+//   WELCOME_RULES_CHANNEL_ID, WELCOME_ROLES_CHANNEL_ID, WELCOME_ROLES_MSP_CHANNEL_ID, WELCOME_PSEUDOS_CHANNEL_ID, WELCOME_CHAT_CHANNEL_ID : salons cités dans le message (une ligne sans salon est omise)
+//   INVITE_LOG_CHANNEL_ID     salon admin du journal des invitations (« X vient d'arriver, invité par Y » / « X est parti »). Vide = désactivé
+//   LEAVE_CHANNEL_ID          salon du message « au revoir » quand quelqu'un quitte (sinon le salon de bienvenue)
+//   BOOST_CHANNEL_ID          salon du message « merci pour le boost » (sinon le salon de bienvenue)
+//   WELCOME_BANNER_URL        lien d'une image de fond (sinon assets/banniere.png, sinon dégradé de la saison)
+//   WELCOME_USE_SERVER_BANNER true : reprendre la bannière du serveur comme fond (désactivé par défaut)
+//   ANNONCE_CHANNEL_ID, ANNONCE_ROLE_ID  /annonce-msp : salon et rôle pingé par défaut (facultatif, sinon choisis-les dans la commande)
+//   LEVELS_ANNOUNCE_CHANNEL_ID  salon où annoncer les passages de niveau. Plus besoin de le mettre ici : tape /annonces-niveaux salon dans Discord (la commande a la priorité)
+//   LEVELS_THEME                facultatif : force la saison (halloween | automne | noel | hiver). Sinon elle change toute seule avec la date
+//   LEVELS_MESSAGE              facultatif : ton propre message de passage de niveau ({user} et {level})
+//   LEVELS_VIEW_OTHERS          true (défaut) : les membres peuvent voir le niveau des autres ; false pour l'interdire
+//   LEVELS_RESET_ON_LEAVE       true : un membre qui quitte le serveur perd son XP (défaut : false)
+//   LEVELS_RESET_ON_BAN         true : un membre banni perd son XP (défaut : true)
+//   LEVELS_EXCLUDED_CHANNEL_IDS salons sans XP (par défaut : les mêmes que pour les bonbons)
 const fs = require('fs');
 const path = require('path');
-const http = require('http');
-const { Client, GatewayIntentBits, Collection, Events, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, AttachmentBuilder, Partials, ChannelType, StringSelectMenuBuilder } = require('discord.js');
-const storage = require('./utils/storage');
-const antispam = require('./utils/antispam');
-const messageStats = require('./utils/messageStats');
-const uno = require('./utils/unoGame');
-const wheelGame = require('./utils/wheelGame');
-const { shuffleArray } = require('./utils/random');
-const { buildAdventComponents, buildAdventEmbed, isDayUnlocked } = require('./commands/avent-publier');
-const { generateWheelGif } = require('./utils/wheelImage');
-const { buildGiveawayEmbed } = require('./commands/creategw');
-const { buildLobbyEmbed } = require('./commands/uno');
-const bonbons = require('./bonbons-halloween'); // 🎃 système bonbons / citrouilles
-const niveaux = require('./niveaux-bienvenue'); // 🏆 niveaux, cartes de rang, bienvenue
+const { Events, SlashCommandBuilder, PermissionFlagsBits, AttachmentBuilder, EmbedBuilder, ChannelType } = require('discord.js');
+const levels = require('./levels');
+const cards = require('./cards');
+const welcome = require('./welcome');
+const invitelog = require('./invitelog');
+const annonces = require('./annonces');
+const moderation = require('./moderation');
+const logs = require('./logs');
+const aide = require('./aide');
+const automod = require('./automod');
+const avent = require('./avent');
+const scammers = require('./scammers');
 
-// --- Petit serveur web ---
-// Render (et d'autres hébergeurs "gratuits") ont besoin que l'app réponde sur un port web
-// pour la considérer comme active. Ce serveur ne sert à rien d'autre que ça.
-const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('Le bot MSP est en ligne ✅');
-}).listen(PORT, () => {
-  console.log(`🌐 Serveur web de statut lancé sur le port ${PORT}`);
-});
+const EPHEMERAL = 64;
+let inv = null; // journal des invitations (créé dans init)
+const GUILD_ID = () => process.env.GUILD_ID || '';
+function excluded() {
+  const env = (process.env.LEVELS_EXCLUDED_CHANNEL_IDS || '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (env.length) return env;
+  try { return require('../bonbons-halloween/config').excludedChannelIds; } catch { return []; }
+}
+const flag = (name, dflt) => { const v = (process.env[name] || '').trim().toLowerCase(); return v ? ['true', '1', 'oui', 'yes'].includes(v) : dflt; };
+const themes = require('./themes');
+const THEME = () => themes.currentName();
+const staffOk = (i) => i.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
 
-// Filets de sécurité : si quelque chose plante ailleurs dans le code,
-// on veut le voir dans les logs plutôt qu'un silence total.
-process.on('uncaughtException', (err) => {
-  console.error('💥 Erreur fatale (uncaughtException) :', err);
-});
-process.on('unhandledRejection', (err) => {
-  console.error('💥 Erreur fatale (unhandledRejection) :', err);
-});
+// Réglages modifiables depuis Discord (volume Railway) : le salon des annonces de niveau
+const SETTINGS_DIR = process.env.DATA_DIR || (fs.existsSync('/app/data') ? '/app/data' : path.join(__dirname, 'data'));
+const SETTINGS_FILE = path.join(SETTINGS_DIR, 'niveaux-settings.json');
+let settings = {};
+try { if (fs.existsSync(SETTINGS_FILE)) settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')); } catch (e) { console.error('[niveaux] réglages illisibles', e.message); }
+function saveSettings() { try { fs.mkdirSync(SETTINGS_DIR, { recursive: true }); const tmp = `${SETTINGS_FILE}.tmp`; fs.writeFileSync(tmp, JSON.stringify(settings)); fs.renameSync(tmp, SETTINGS_FILE); } catch (e) { console.error('[niveaux] réglages non sauvegardés', e.message); } }
+const announceId = () => settings.announceChannelId || (process.env.LEVELS_ANNOUNCE_CHANNEL_ID || '').trim();
 
-console.log('🔧 Vérification des variables d\'environnement...');
-console.log('DISCORD_TOKEN présent :', !!process.env.DISCORD_TOKEN);
-console.log('CLIENT_ID présent :', !!process.env.CLIENT_ID);
-console.log('GUILD_ID présent :', !!process.env.GUILD_ID);
-console.log('BLACKLIST_ROLE_ID présent :', !!process.env.BLACKLIST_ROLE_ID);
+const DEFS = [
+  new SlashCommandBuilder().setName('rang').setDescription('Ta carte de niveau')
+    .addUserOption((o) => o.setName('membre').setDescription('Voir la carte d’un autre membre')),
+  new SlashCommandBuilder().setName('invites').setDescription('Voir ton nombre d’invitations')
+    .addUserOption((o) => o.setName('membre').setDescription('Voir celui d’un autre membre')),
+  new SlashCommandBuilder().setName('classement').setDescription('Le top 10 des niveaux du serveur'),
+  new SlashCommandBuilder().setName('annonces-niveaux').setDescription('(Staff) Régler les annonces de passage de niveau')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand((s) => s.setName('salon').setDescription('Choisir le salon où le bot annonce les passages de niveau')
+      .addChannelOption((o) => o.setName('salon').setDescription('Salon des annonces de niveau').addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement).setRequired(true)))
+    .addSubcommand((s) => s.setName('test').setDescription('Envoyer une fausse annonce de niveau pour vérifier que tout marche'))
+    .addSubcommand((s) => s.setName('off').setDescription('Arrêter les annonces de niveau')),
+  new SlashCommandBuilder().setName('niveaux').setDescription('(Staff) Gérer les niveaux et la bienvenue')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand((s) => s.setName('definir').setDescription('Fixer le niveau d’un membre')
+      .addUserOption((o) => o.setName('membre').setDescription('Membre').setRequired(true))
+      .addIntegerOption((o) => o.setName('niveau').setDescription('Niveau').setMinValue(0).setMaxValue(500).setRequired(true)))
+    .addSubcommand((s) => s.setName('importer').setDescription('Importer les niveaux depuis un fichier texte (une ligne : identifiant;niveau)')
+      .addAttachmentOption((o) => o.setName('fichier').setDescription('Fichier .txt ou .csv').setRequired(true))
+      .addStringOption((o) => o.setName('type').setDescription('Ce que contient la 2e colonne').addChoices({ name: 'Niveau (par défaut)', value: 'niveau' }, { name: 'XP total', value: 'xp' })))
+    .addSubcommand((s) => s.setName('apercu-bienvenue').setDescription('Voir l’image de bienvenue avec ton profil'))
+        .addSubcommand((s) => s.setName('invitations-definir').setDescription('Fixer le nombre d’invitations d’un membre')
+      .addUserOption((o) => o.setName('membre').setDescription('Membre').setRequired(true))
+      .addIntegerOption((o) => o.setName('nombre').setDescription('Nombre d’invitations').setMinValue(0).setRequired(true)))
+    .addSubcommand((s) => s.setName('invitations-importer').setDescription('Importer les invitations d’InviteLogger (une ligne : pseudo;nombre)')
+      .addAttachmentOption((o) => o.setName('fichier').setDescription('Fichier .txt ou .csv').setRequired(true)))
+    .addSubcommand((s) => s.setName('apercu-depart').setDescription('Voir le message d’au revoir avec ton profil'))
+    .addSubcommand((s) => s.setName('apercu-boost').setDescription('Voir le message de remerciement pour un boost avec ton profil'))
+    .addSubcommand((s) => s.setName('annonces-salon').setDescription('Choisir le salon où le bot annonce les passages de niveau')
+      .addChannelOption((o) => o.setName('salon').setDescription('Salon des annonces de niveau').addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement).setRequired(true)))
+    .addSubcommand((s) => s.setName('annonces-test').setDescription('Envoyer une fausse annonce de niveau pour vérifier que tout marche'))
+    .addSubcommand((s) => s.setName('annonces-off').setDescription('Arrêter les annonces de niveau')),
+];
 
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers, // nécessaire pour gérer les rôles - active "Server Members Intent" dans le Developer Portal
-    GatewayIntentBits.GuildMessages, // nécessaire pour l'anti-spam
-    GatewayIntentBits.MessageContent, // nécessaire pour lire le texte des messages (ex: transcripts de tickets) - active "Message Content Intent" dans le Developer Portal
-    GatewayIntentBits.GuildMessageReactions, // nécessaire pour /drop et le règlement
-    GatewayIntentBits.GuildVoiceStates, // 🎃 bonbons : temps passé en vocal
-    GatewayIntentBits.GuildInvites, // 🎃 bonbons : parrainage (qui a invité qui)
-    GatewayIntentBits.GuildModeration,
-    GatewayIntentBits.GuildEmojisAndStickers,
-  ],
-  // Nécessaire pour que les réactions fonctionnent même sur un message envoyé avant
-  // le dernier redémarrage du bot (comme le règlement, qui reste affiché des mois)
-  partials: [Partials.Message, Partials.Channel, Partials.Reaction],
-});
+async function avatarOf(user) { return user.displayAvatarURL({ extension: 'png', size: 256, forceStatic: true }); }
 
-// --- Chargement des commandes ---
-client.commands = new Collection();
-const commandsPath = path.join(__dirname, 'commands');
-try {
-  const commandFiles = fs.readdirSync(commandsPath).filter(f => f.endsWith('.js'));
-  console.log(`📂 ${commandFiles.length} fichier(s) de commande trouvé(s) :`, commandFiles);
-  for (const file of commandFiles) {
-    const command = require(path.join(commandsPath, file));
-    if (command.data) client.commands.set(command.data.name, command);
-  }
-} catch (err) {
-  console.error('💥 Erreur lors du chargement des commandes (dossier "commands" introuvable ou incomplet) :', err);
+async function sendRank(i, user, name) {
+  const info = levels.info(user.id);
+  const buf = await cards.rankCard({ name, avatarUrl: await avatarOf(user), level: info.level, into: info.into, need: info.need, rank: info.rank, total: info.total, xp: info.xp, theme: THEME() });
+  return i.editReply({ files: [new AttachmentBuilder(buf, { name: 'rang.png' })] });
 }
 
-// 🎃 Système bonbons / citrouilles : ajoute ses commandes à client.commands (donc enregistrées avec les tiennes au démarrage)
-bonbons.init(client, { getGuildConfig: storage.getGuildConfig });
-niveaux.init(client); // 🏆 /rang /classement + bienvenue en image
+async function welcomeFor(member) {
+  const g = member.guild;
+  // La bannière du serveur n'est plus reprise d'office (l'avatar cachait le nom). WELCOME_USE_SERVER_BANNER=true pour la remettre.
+  const useServerBanner = flag('WELCOME_USE_SERVER_BANNER', false);
+  const banner = process.env.WELCOME_BANNER_URL || (useServerBanner ? g.bannerURL({ extension: 'png', size: 1024 }) : null) || null;
+  const buf = await cards.welcomeCard({ name: member.displayName, avatarUrl: await avatarOf(member.user), bannerUrl: banner, memberCount: g.memberCount, serverName: g.name, theme: THEME() });
+  return new AttachmentBuilder(buf, { name: 'bienvenue.png' });
+}
 
-console.log('🔄 Tentative de connexion à Discord...');
+async function boostFor(member) {
+  const buf = await cards.boostCard({ name: member.displayName, avatarUrl: await avatarOf(member.user), serverName: member.guild.name, theme: THEME() });
+  return new AttachmentBuilder(buf, { name: 'boost.png' });
+}
 
-// --- Message de remerciement automatique quand un membre booste le serveur ---
-// + cascade de rôles automatique (ex: rôle Membre -> rôles supplémentaires)
-client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
+async function leaveFor(user, guild) {
+  const buf = await cards.leaveCard({ name: user.globalName || user.username, avatarUrl: await avatarOf(user), serverName: guild.name, theme: THEME() });
+  return new AttachmentBuilder(buf, { name: 'depart.png' });
+}
+
+/** Envoie l'annonce de passage de niveau (carte image, ou texte seul si l'image échoue). */
+async function sendLevelUp(ch, user, displayName, from, to) {
+  let files = [];
   try {
-    // On détecte le passage de "ne boost pas" à "boost" (premiumSince passe de null à une date)
-    const justStartedBoosting = !oldMember.premiumSince && newMember.premiumSince;
-    if (justStartedBoosting) {
-      const config = storage.getGuildConfig(newMember.guild.id);
-      if (config.boostChannelId) {
-        const channel = await newMember.guild.channels.fetch(config.boostChannelId).catch(() => null);
-        if (channel) {
-          const embed = new EmbedBuilder()
-            .setColor(config.boostColor ?? 0xFF73FA)
-            .setTitle(config.boostTitle ?? 'Merci pour le boost ! 💖')
-            .setDescription((config.boostMessage ?? 'Merci {membre} pour ton boost !').replace(/\{membre\}/g, newMember.toString()));
-          await channel.send({ embeds: [embed] });
-        }
-      }
-    }
-  } catch (err) {
-    console.error('Erreur lors de l\'envoi du message de boost :', err);
-  }
-
-  try {
-    // Cascade de rôles : dès qu'un membre reçoit le rôle déclencheur (ex: Membre),
-    // on lui ajoute automatiquement les rôles supplémentaires configurés.
-    const config = storage.getGuildConfig(newMember.guild.id);
-    if (config.autoRoleTriggerId && config.autoRoleBonusIds?.length) {
-      const hadTrigger = oldMember.roles.cache.has(config.autoRoleTriggerId);
-      const hasTrigger = newMember.roles.cache.has(config.autoRoleTriggerId);
-      if (!hadTrigger && hasTrigger) {
-        const toAdd = config.autoRoleBonusIds.filter(id => !newMember.roles.cache.has(id));
-        if (toAdd.length) {
-          await newMember.roles.add(toAdd, 'Rôles liés automatiquement au rôle déclencheur');
-        }
-      }
-    }
-  } catch (err) {
-    console.error('Erreur lors de la cascade de rôles automatique :', err);
-  }
-});
-
-// --- Réaction au règlement : donne le rôle Membre ---
-client.on(Events.MessageReactionAdd, async (reaction, user) => {
-  try {
-    if (user.bot) return;
-    if (reaction.partial) await reaction.fetch().catch(() => {});
-    if (!reaction.message.guild) return;
-
-    const config = storage.getGuildConfig(reaction.message.guild.id);
-    if (!config.reglementMessageId || reaction.message.id !== config.reglementMessageId) return;
-    if (reaction.emoji.name !== (config.reglementEmoji || '✅')) return;
-
-    const member = await reaction.message.guild.members.fetch(user.id).catch(() => null);
-    if (!member) return;
-
-    if (!member.roles.cache.has(config.reglementRoleId)) {
-      await member.roles.add(config.reglementRoleId, 'Acceptation du règlement');
-    }
-  } catch (err) {
-    console.error('Erreur lors de l\'attribution du rôle après acceptation du règlement :', err);
-  }
-});
-
-// --- Anti-spam ---
-client.on(Events.MessageCreate, async message => {
-  // On ignore les messages des bots (dont le nôtre) et les messages en dehors d'un serveur
-  if (message.author.bot || !message.guild) return;
-
-  messageStats.recordMessage(message.guild.id, message.author.id);
-
-  if (!antispam.isSpam(message.author.id)) return;
-
-  const member = message.member;
-  if (!member || !member.moderatable) return; // on ne touche pas aux membres qu'on ne peut pas modérer (ex: admins)
-
-  antispam.resetHistory(message.author.id);
-
-  try {
-    // Supprime les derniers messages de ce membre dans le salon
-    const recentMessages = await message.channel.messages.fetch({ limit: 20 });
-    const toDelete = recentMessages.filter(m => m.author.id === message.author.id);
-    await message.channel.bulkDelete(toDelete, true).catch(() => {});
-
-    // Mute temporairement le membre
-    await member.timeout(antispam.TIMEOUT_MS, 'Anti-spam automatique');
-
-    const warning = await message.channel.send(
-      `🚫 ${member} a été mis en sourdine 5 minutes pour spam (trop de messages envoyés trop vite).`
-    );
-    setTimeout(() => warning.delete().catch(() => {}), 8000);
-  } catch (err) {
-    console.error('Erreur anti-spam :', err);
-  }
-});
-
-// --- Gestion des interactions (commandes + boutons) ---
-client.on(Events.InteractionCreate, async interaction => {
-  try {
-    if (interaction.isChatInputCommand()) {
-      const command = client.commands.get(interaction.commandName);
-      if (!command) return;
-      await command.execute(interaction);
-      return;
-    }
-
-    if (interaction.isButton() && interaction.customId === 'gw_participate') {
-      await handleGiveawayParticipation(interaction);
-      return;
-    }
-
-    if (interaction.isButton() && interaction.customId.startsWith('gw_cancel_ask:')) {
-      await handleGiveawayCancelAsk(interaction);
-      return;
-    }
-
-    if (interaction.isButton() && interaction.customId.startsWith('gw_cancel_confirm:')) {
-      await handleGiveawayCancelConfirm(interaction);
-      return;
-    }
-
-    if (interaction.isButton() && interaction.customId.startsWith('gw_cancel_abort:')) {
-      await handleGiveawayCancelAbort(interaction);
-      return;
-    }
-
-    if (interaction.isButton() && interaction.customId.startsWith('uno_')) {
-      await handleUnoButton(interaction);
-      return;
-    }
-
-    if (interaction.isButton() && interaction.customId === 'wheel_launch') {
-      await handleWheelLaunch(interaction);
-      return;
-    }
-
-    if (interaction.isButton() && interaction.customId.startsWith('avent_open:')) {
-      await handleAdventOpen(interaction);
-      return;
-    }
-
-    if (interaction.isButton() && interaction.customId === 'ticket_close') {
-      await handleTicketClose(interaction);
-      return;
-    }
-
-    if (interaction.isStringSelectMenu() && interaction.customId === 'ticket_category_select') {
-      await handleTicketOpen(interaction);
-      return;
-    }
-  } catch (err) {
-    console.error(err);
-    const errorPayload = { content: "❌ Une erreur est survenue.", ephemeral: true };
-    if (interaction.replied || interaction.deferred) {
-      await interaction.followUp(errorPayload).catch(() => {});
-    } else {
-      await interaction.reply(errorPayload).catch(() => {});
-    }
-  }
-});
-
-async function handleGiveawayParticipation(interaction) {
-  const roleId = process.env.BLACKLIST_ROLE_ID;
-  const member = interaction.member;
-
-  // Vérifie si le membre est blacklisté
-  if (roleId && member.roles.cache.has(roleId)) {
-    const blacklist = storage.getBlacklist();
-    const entry = blacklist.find(e => e.userId === member.id);
-    const dateStr = entry ? `<t:${Math.floor(entry.endTimestamp / 1000)}:F>` : 'une date indéterminée';
-    return interaction.reply({
-      content: `🚫 Tu es actuellement blacklisté des giveaways jusqu'au ${dateStr}.`,
-      ephemeral: true,
-    });
-  }
-
-  const giveaways = storage.getGiveaways();
-  const giveaway = giveaways.find(g => g.messageId === interaction.message.id && !g.ended);
-
-  if (!giveaway) {
-    return interaction.reply({ content: "Ce giveaway n'est plus disponible.", ephemeral: true });
-  }
-
-  const cancelRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`gw_cancel_ask:${giveaway.messageId}`)
-      .setLabel('❌ Annuler ma participation')
-      .setStyle(ButtonStyle.Danger)
-  );
-
-  // Déjà participant : on lui propose juste d'annuler, sans le compter deux fois
-  if (giveaway.participants.includes(member.id)) {
-    return interaction.reply({
-      content: "Tu participes déjà à ce giveaway ✅",
-      components: [cancelRow],
-      ephemeral: true,
-    });
-  }
-
-  giveaway.participants.push(member.id);
-  storage.saveGiveaways(giveaways);
-  bonbons.api.giveaway(member.id, giveaway.messageId).catch(() => {}); // 🎃 +50 bonbons
-
-  // Met à jour le compteur de participants dans l'embed public
-  const embed = buildGiveawayEmbed({
-    prize: giveaway.prize,
-    endTimestamp: giveaway.endTimestamp,
-    winnersCount: giveaway.winnersCount,
-    participantsCount: giveaway.participants.length,
-    boosterBonus: giveaway.boosterBonus,
-    conditions: giveaway.conditions,
-    host: giveaway.hostName ? { name: giveaway.hostName, avatarURL: giveaway.hostAvatarURL } : null,
-  });
-  await interaction.message.edit({ embeds: [embed] }).catch(() => {});
-
-  return interaction.reply({
-    content: "🎉 Tu participes bien au giveaway, bonne chance !",
-    components: [cancelRow],
-    ephemeral: true,
-  });
+    const buf = await cards.levelUpCard({ name: displayName, avatarUrl: await avatarOf(user), from, to, theme: THEME() });
+    files = [new AttachmentBuilder(buf, { name: 'niveau.png' })];
+  } catch (e) { console.error('[niveaux] carte de niveau impossible, envoi du texte seul :', e.message); }
+  return ch.send({ content: themes.levelMessage(THEME(), `<@${user.id}>`, to), files, allowedMentions: { users: [user.id] } });
 }
 
-// Étape 1 : le membre a cliqué sur "Annuler ma participation" → on demande confirmation
-async function handleGiveawayCancelAsk(interaction) {
-  const giveawayMessageId = interaction.customId.split(':')[1];
-
-  const confirmRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`gw_cancel_confirm:${giveawayMessageId}`)
-      .setLabel('Oui, je confirme ne plus vouloir participer')
-      .setStyle(ButtonStyle.Danger),
-    new ButtonBuilder()
-      .setCustomId(`gw_cancel_abort:${giveawayMessageId}`)
-      .setLabel('Non, annuler')
-      .setStyle(ButtonStyle.Secondary)
-  );
-
-  return interaction.update({
-    content: '⚠️ Es-tu sûr(e) de vouloir annuler ta participation à ce giveaway ?',
-    components: [confirmRow],
-  });
-}
-
-// Étape 2a : le membre confirme → on retire vraiment sa participation
-async function handleGiveawayCancelConfirm(interaction) {
-  const giveawayMessageId = interaction.customId.split(':')[1];
-  const member = interaction.member;
-
-  const giveaways = storage.getGiveaways();
-  const giveaway = giveaways.find(g => g.messageId === giveawayMessageId && !g.ended);
-
-  if (!giveaway) {
-    return interaction.update({ content: "Ce giveaway n'est plus disponible.", components: [] });
+/** /annonces-niveaux salon | test | off (et les mêmes sous-commandes de /niveaux). */
+async function annoncesCmd(i, sub) {
+  if (sub === 'salon') {
+    const ch = i.options.getChannel('salon');
+    settings.announceChannelId = ch.id; saveSettings();
+    const me = ch.permissionsFor?.(i.guild.members.me);
+    const missing = me ? [['ViewChannel', 'voir le salon'], ['SendMessages', 'envoyer des messages'], ['AttachFiles', 'joindre des fichiers']].filter(([f]) => !me.has(PermissionFlagsBits[f])).map(([, t]) => t) : [];
+    return i.reply({ content: `✅ Les passages de niveau seront annoncés dans <#${ch.id}>.${missing.length ? `\n⚠️ Il manque au bot ces droits dans ce salon : **${missing.join(', ')}**. Ajoute-les sinon rien ne s’affichera.` : ''}\nTape \`/annonces-niveaux test\` pour vérifier.`, flags: EPHEMERAL });
   }
-
-  giveaway.participants = giveaway.participants.filter(id => id !== member.id);
-  storage.saveGiveaways(giveaways);
-
-  // Met à jour le compteur sur le message public du giveaway
-  try {
-    const channel = await interaction.client.channels.fetch(giveaway.channelId);
-    const originalMessage = await channel.messages.fetch(giveaway.messageId);
-    const embed = buildGiveawayEmbed({
-      prize: giveaway.prize,
-      endTimestamp: giveaway.endTimestamp,
-      winnersCount: giveaway.winnersCount,
-      participantsCount: giveaway.participants.length,
-      boosterBonus: giveaway.boosterBonus,
-      conditions: giveaway.conditions,
-      host: giveaway.hostName ? { name: giveaway.hostName, avatarURL: giveaway.hostAvatarURL } : null,
-    });
-    await originalMessage.edit({ embeds: [embed] });
-  } catch (err) {
-    console.error('Erreur lors de la mise à jour du giveaway après annulation :', err);
+  if (sub === 'off') {
+    delete settings.announceChannelId; saveSettings();
+    const env = (process.env.LEVELS_ANNOUNCE_CHANNEL_ID || '').trim();
+    return i.reply({ content: env ? `Salon réglé par commande retiré, mais la variable Railway LEVELS_ANNOUNCE_CHANNEL_ID (<#${env}>) est encore remplie : vide-la aussi pour tout arrêter.` : 'Les annonces de niveau sont arrêtées.', flags: EPHEMERAL });
   }
-
-  return interaction.update({ content: '✅ Ta participation a bien été annulée.', components: [] });
-}
-
-// Étape 2b : le membre revient sur sa décision → on ne change rien
-async function handleGiveawayCancelAbort(interaction) {
-  return interaction.update({ content: '👍 Pas de souci, tu participes toujours au giveaway 🎉', components: [] });
-}
-
-// --- UNO ---
-
-function colorToStyle(color) {
-  switch (color) {
-    case 'rouge': return ButtonStyle.Danger;
-    case 'vert': return ButtonStyle.Success;
-    case 'bleu': return ButtonStyle.Primary;
-    default: return ButtonStyle.Secondary; // jaune et noir n'ont pas de style dédié
-  }
-}
-
-function buildUnoStateEmbed(game) {
-  const top = uno.topCard(game);
-  return new EmbedBuilder()
-    .setColor(0xC4D6C3)
-    .setTitle('🎴 UNO en cours')
-    .setDescription(
-      `Carte du dessus : **${uno.cardLabel(top)}**\n` +
-      `Couleur actuelle : ${uno.COLOR_EMOJI[game.currentColor]} ${game.currentColor}\n\n` +
-      `C'est au tour de <@${uno.currentPlayer(game)}> !`
-    )
-    .addFields({
-      name: 'Joueurs',
-      value: game.players.map(id => `<@${id}> — ${game.hands[id].length} carte(s)`).join('\n'),
-    });
-}
-
-async function updatePublicUnoMessage(client, game, opts = {}) {
-  try {
-    const channel = await client.channels.fetch(game.channelId);
-    const message = await channel.messages.fetch(game.messageId);
-
-    if (opts.ended) {
-      const embed = new EmbedBuilder()
-        .setColor(0x95A5A6)
-        .setTitle('🎴 Partie terminée')
-        .setDescription(`🏆 <@${opts.winnerId}> a gagné la partie de UNO !`);
-      await message.edit({ embeds: [embed], components: [] });
-    } else {
-      const embed = buildUnoStateEmbed(game);
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('uno_turn').setLabel('🎴 Voir ma main / Jouer').setStyle(ButtonStyle.Primary)
-      );
-      await message.edit({ embeds: [embed], components: [row] });
-    }
-  } catch (err) {
-    console.error('Erreur lors de la mise à jour du message UNO :', err);
-  }
-}
-
-function buildHandComponents(hand) {
-  // On limite l'affichage à 20 cartes pour rester dans la limite de 5 lignes de boutons Discord
-  const playable = hand.slice(0, 20);
-  const rows = [];
-  for (let i = 0; i < playable.length; i += 5) {
-    const chunk = playable.slice(i, i + 5);
-    const row = new ActionRowBuilder().addComponents(
-      chunk.map((card, idx) =>
-        new ButtonBuilder()
-          .setCustomId(`uno_play:${i + idx}`)
-          .setLabel(uno.cardLabel(card))
-          .setStyle(colorToStyle(card.color))
-      )
-    );
-    rows.push(row);
-  }
-  rows.push(new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('uno_draw').setLabel('🃏 Piocher').setStyle(ButtonStyle.Secondary)
-  ));
-  return rows;
-}
-
-async function handleUnoButton(interaction) {
-  const game = uno.getGame(interaction.channel.id);
-  const id = interaction.customId;
-
-  if (id === 'uno_join') {
-    if (!game) return interaction.reply({ content: 'Aucune partie en attente dans ce salon.', ephemeral: true });
-    if (game.started) return interaction.reply({ content: 'La partie a déjà commencé.', ephemeral: true });
-    uno.addPlayer(game, interaction.user.id);
-    return interaction.update({ embeds: [buildLobbyEmbed(game)] });
-  }
-
-  if (id === 'uno_cancel') {
-    if (!game) return interaction.reply({ content: 'Aucune partie en cours dans ce salon.', ephemeral: true });
-    if (interaction.user.id !== game.hostId) {
-      return interaction.reply({ content: "Seul l'hôte de la partie peut l'annuler.", ephemeral: true });
-    }
-    uno.deleteGame(interaction.channel.id);
-    return interaction.update({ content: '❌ Partie de UNO annulée.', embeds: [], components: [] });
-  }
-
-  if (id === 'uno_start') {
-    if (!game) return interaction.reply({ content: 'Aucune partie en attente dans ce salon.', ephemeral: true });
-    if (interaction.user.id !== game.hostId) {
-      return interaction.reply({ content: "Seul l'hôte de la partie peut la démarrer.", ephemeral: true });
-    }
-    if (game.players.length < 2) {
-      return interaction.reply({ content: 'Il faut au moins 2 joueurs pour démarrer.', ephemeral: true });
-    }
-    uno.startGame(game);
-    const embed = buildUnoStateEmbed(game);
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('uno_turn').setLabel('🎴 Voir ma main / Jouer').setStyle(ButtonStyle.Primary)
-    );
-    await interaction.update({ embeds: [embed], components: [row] });
-    game.messageId = interaction.message.id;
-    return;
-  }
-
-  if (id === 'uno_turn') {
-    if (!game || !game.started) return interaction.reply({ content: 'Aucune partie en cours dans ce salon.', ephemeral: true });
-    if (uno.currentPlayer(game) !== interaction.user.id) {
-      return interaction.reply({ content: "Ce n'est pas ton tour.", ephemeral: true });
-    }
-    const hand = game.hands[interaction.user.id];
-    const embed = new EmbedBuilder()
-      .setColor(0xC4D6C3)
-      .setTitle('🎴 Ta main')
-      .setDescription('Clique sur une carte pour la jouer, ou pioche si tu ne peux pas jouer.');
-    return interaction.reply({ embeds: [embed], components: buildHandComponents(hand), ephemeral: true });
-  }
-
-  if (id.startsWith('uno_play:')) {
-    if (!game || !game.started) return interaction.update({ content: 'Cette partie n\'existe plus.', embeds: [], components: [] });
-    if (uno.currentPlayer(game) !== interaction.user.id) {
-      return interaction.update({ content: "Ce n'est plus ton tour.", embeds: [], components: [] });
-    }
-
-    const cardIndex = parseInt(id.split(':')[1], 10);
-    const result = uno.playCard(game, interaction.user.id, cardIndex);
-
-    if (!result.success) {
-      // On garde la main affichée pour réessayer
-      const hand = game.hands[interaction.user.id];
-      return interaction.reply({ content: `⚠️ ${result.error}`, ephemeral: true });
-    }
-
-    if (result.winnerId) {
-      for (const pid of game.players) bonbons.api.miniJeu(pid).catch(() => {}); // 🎃 partie de UNO terminée
-      uno.deleteGame(interaction.channel.id);
-      await interaction.update({ content: `🏆 Bravo, tu as gagné la partie de UNO !`, embeds: [], components: [] });
-      await updatePublicUnoMessage(interaction.client, game, { ended: true, winnerId: result.winnerId });
-      return;
-    }
-
-    if (result.needsColorChoice) {
-      const colorRow = new ActionRowBuilder().addComponents(
-        uno.COLORS.map(c =>
-          new ButtonBuilder().setCustomId(`uno_color:${c}`).setLabel(`${uno.COLOR_EMOJI[c]} ${c}`).setStyle(ButtonStyle.Secondary)
-        )
-      );
-      await interaction.update({ content: '🃏 Tu as joué un Joker ! Choisis la couleur :', embeds: [], components: [colorRow] });
-      return;
-    }
-
-    await interaction.update({ content: '✅ Carte jouée !', embeds: [], components: [] });
-    await updatePublicUnoMessage(interaction.client, game);
-    return;
-  }
-
-  if (id === 'uno_draw') {
-    if (!game || !game.started) return interaction.update({ content: 'Cette partie n\'existe plus.', embeds: [], components: [] });
-    if (uno.currentPlayer(game) !== interaction.user.id) {
-      return interaction.update({ content: "Ce n'est plus ton tour.", embeds: [], components: [] });
-    }
-    uno.drawCards(game, interaction.user.id, 1);
-    uno.advanceTurn(game);
-    await interaction.update({ content: '🃏 Tu as pioché une carte, ton tour est passé.', embeds: [], components: [] });
-    await updatePublicUnoMessage(interaction.client, game);
-    return;
-  }
-
-  if (id.startsWith('uno_color:')) {
-    if (!game || !game.started) return interaction.update({ content: 'Cette partie n\'existe plus.', embeds: [], components: [] });
-    const color = id.split(':')[1];
-    uno.chooseColor(game, color);
-    await interaction.update({ content: `Couleur choisie : ${uno.COLOR_EMOJI[color]} ${color}`, embeds: [], components: [] });
-    await updatePublicUnoMessage(interaction.client, game);
-    return;
-  }
-}
-
-// Construit un "pot" de tirage pondéré (les boosters comptent deux fois si l'option est activée)
-// puis tire `count` gagnants uniques parmi les personnes éligibles.
-async function drawWinners({ guildId, candidateIds, count, boosterBonus }) {
-  let pool = [...candidateIds];
-  if (boosterBonus) {
+  if (sub === 'test') {
+    await i.deferReply({ flags: EPHEMERAL });
+    const id = announceId();
+    if (!id) return i.editReply('Aucun salon n’est réglé : tape d’abord `/annonces-niveaux salon`.');
+    const ch = await i.client.channels.fetch(id).catch(() => null);
+    if (!ch?.isTextBased()) return i.editReply(`Je ne trouve pas le salon <#${id}> (supprimé, ou je n’y ai pas accès). Choisis-en un autre avec \`/annonces-niveaux salon\`.`);
     try {
-      const guild = await client.guilds.fetch(guildId);
-      for (const userId of candidateIds) {
-        const member = await guild.members.fetch(userId).catch(() => null);
-        if (member && member.premiumSince) {
-          pool.push(userId); // entrée supplémentaire = 2x plus de chances
-        }
-      }
-    } catch (err) {
-      console.error('Erreur lors du calcul du bonus booster :', err);
+      const member = await i.guild.members.fetch(i.user.id).catch(() => null);
+      await sendLevelUp(ch, i.user, member?.displayName || i.user.username, 4, 5);
+      return i.editReply(`✅ Annonce de test envoyée dans <#${id}>. Si tu l’y vois, les vraies annonces fonctionneront aussi.`);
+    } catch (e) {
+      return i.editReply(`❌ Impossible d’écrire dans <#${id}> : ${e.message}\nVérifie que le bot peut **voir le salon, envoyer des messages et joindre des fichiers**.`);
     }
   }
-
-  const shuffled = shuffleArray(pool);
-  const winners = [];
-  for (const userId of shuffled) {
-    if (winners.length >= count) break;
-    if (!winners.includes(userId)) winners.push(userId);
-  }
-  return winners;
 }
 
-// --- Roue de la fortune ---
-
-async function handleWheelLaunch(interaction) {
-  const wheel = wheelGame.getWheel(interaction.channel.id);
-  if (!wheel) {
-    return interaction.reply({ content: "Cette roue n'existe plus.", ephemeral: true });
+async function run(i) {
+  const name = i.commandName;
+  if (name === 'annonces-niveaux') {
+    if (!staffOk(i)) return i.reply({ content: 'Commande réservée au staff 🔒', flags: EPHEMERAL });
+    return annoncesCmd(i, i.options.getSubcommand());
   }
-  if (interaction.user.id !== wheel.hostId) {
-    return interaction.reply({ content: "Seul l'hôte de la roue peut la lancer.", ephemeral: true });
+  if (name === 'rang') {
+    await i.deferReply();
+    const user = i.options.getUser('membre') || i.user;
+    if (user.id !== i.user.id && !flag('LEVELS_VIEW_OTHERS', true) && !staffOk(i)) return i.editReply('Tu peux seulement voir ton propre niveau 🔒');
+    const member = await i.guild.members.fetch(user.id).catch(() => null);
+    return sendRank(i, user, member?.displayName || user.username);
   }
-  if (wheel.launched) {
-    return interaction.reply({ content: "La roue a déjà été lancée.", ephemeral: true });
+  if (name === 'invites') {
+    await i.deferReply();
+    const user = i.options.getUser('membre') || i.user;
+    const s = inv.stats(user.id);
+    const member = await i.guild.members.fetch(user.id).catch(() => null);
+    const aboveName = s.above ? await i.guild.members.fetch(s.above.id).then((m) => m.displayName).catch(() => 'le membre au-dessus') : '';
+    const tiles = s.detail
+      ? [{ icon: '✅', label: 'invités', value: s.detail.joins }, { icon: '❌', label: 'partis', value: s.detail.left }, { icon: '🚫', label: 'invalidées', value: s.detail.fake }, { icon: '✨', label: 'bonus', value: s.detail.bonus }]
+      : [{ icon: '✅', label: 'arrivées suivies', value: s.invited }, { icon: '❌', label: 'parties', value: s.left }];
+    const buf = await cards.invitesCard({ name: member?.displayName || user.username, avatarUrl: await avatarOf(user), count: s.count, rank: s.rank, total: s.total,
+      gap: s.above ? s.above.n - s.count + 1 : 0, above: aboveName, tiles, theme: THEME() });
+    return i.editReply({ files: [new AttachmentBuilder(buf, { name: 'invitations.png' })] });
   }
-  if (wheel.participants.length < 2) {
-    return interaction.reply({ content: "Il faut au moins 2 participants pour lancer la roue.", ephemeral: true });
+  if (name === 'classement') {
+    await i.deferReply();
+    if (!flag('LEVELS_VIEW_OTHERS', true) && !staffOk(i)) return i.editReply('Le classement est désactivé sur ce serveur 🔒');
+    const list = levels.ranking().slice(0, 10);
+    const medals = ['🥇', '🥈', '🥉'];
+    const lines = list.map(([id, u], k) => `${medals[k] || `**${k + 1}.**`} <@${id}> · niveau **${levels.levelOf(u.xp).level}** · ${cards.nf(u.xp)} XP`);
+    const e = new EmbedBuilder().setColor(0xff8a2b).setTitle('🏆 Classement des niveaux').setDescription(lines.join('\n') || 'Personne n’est encore classé.');
+    return i.editReply({ embeds: [e], allowedMentions: { parse: [] } });
   }
+  if (name === 'niveaux') {
+    if (!staffOk(i)) return i.reply({ content: 'Commande réservée au staff 🔒', flags: EPHEMERAL });
+    const sub = i.options.getSubcommand();
+    if (sub === 'definir') {
+      const u = i.options.getUser('membre'), n = i.options.getInteger('niveau');
+      levels.setLevel(u.id, n); levels.saveNow();
+      return i.reply({ content: `Niveau de <@${u.id}> fixé à **${n}**.`, flags: EPHEMERAL, allowedMentions: { parse: [] } });
+    }
+    if (sub === 'importer') {
+      await i.deferReply({ flags: EPHEMERAL });
+      const att = i.options.getAttachment('fichier');
+      if (att.size > 2_000_000) return i.editReply('Fichier trop gros (2 Mo maximum).');
+      const text = await (await fetch(att.url)).text();
+      const parsed = levels.parseImport(text, i.options.getString('type') || 'niveau');
+      let res = null;
+      if (parsed.names.length) {
+        const all = await i.guild.members.fetch();
+        res = levels.matchNames(parsed.names, [...all.values()].map((m) => ({ id: m.id, names: [m.displayName, m.user.username, m.user.globalName] })));
+        parsed.ok.push(...res.matched);
+      }
+      levels.backupIfNeeded();
+      const n = levels.applyImport(parsed);
+      const list = (a) => a.slice(0, 25).map((e) => `${cards.clean(e.name, 30)} (${e.value})`).join(', ');
+      let out = `✅ ${n} membre(s) importé(s).`;
+      const approx = res ? res.matched.filter((m) => m.approx) : [];
+      if (approx.length) out += `\n🔎 Associés par ressemblance (à vérifier avec /rang) : ${list(approx)}`;
+      if (res?.ambiguous.length) out += `\n⚠️ Plusieurs membres possibles, à régler avec /niveaux definir : ${list(res.ambiguous)}`;
+      if (res?.missing.length) out += `\n❓ Pseudo introuvable sur le serveur (parti ou pseudo changé) : ${list(res.missing)}`;
+      if (parsed.bad.length) out += `\n⚠️ ${parsed.bad.length} ligne(s) illisible(s), par exemple : \`${parsed.bad.slice(0, 3).join('` · `')}\``;
+      return i.editReply(out.slice(0, 1900));
+    }
+    if (sub === 'invitations-definir') {
+      const u = i.options.getUser('membre'), n = i.options.getInteger('nombre');
+      inv.setCount(u.id, n); inv.flush();
+      return i.reply({ content: `Invitations de <@${u.id}> fixées à **${n}**.`, flags: EPHEMERAL, allowedMentions: { parse: [] } });
+    }
+    if (sub === 'invitations-importer') {
+      await i.deferReply({ flags: EPHEMERAL });
+      const att = i.options.getAttachment('fichier');
+      if (att.size > 2_000_000) return i.editReply('Fichier trop gros (2 Mo maximum).');
+      // Format simple « pseudo;total » ou détaillé « pseudo;invités;partis;invalidées;bonus » (le total est calculé)
+      const det = {};
+      const raw = (await (await fetch(att.url)).text()).split(/\r?\n/).map((l) => {
+        const p = l.split(/[;\t]/).map((x) => x.trim());
+        if (p.length === 5 && p.slice(1).every((x) => /^\d+$/.test(x))) {
+          const [, j, l2, f, b] = p.map(Number); det[levels.norm(p[0])] = { joins: j, left: l2, fake: f, bonus: b };
+          return `${p[0]};${Math.max(0, j + b - f - l2)}`;
+        }
+        return l;
+      }).join('\n');
+      const parsed = levels.parseImport(raw);
+      let res = null;
+      if (parsed.names.length) {
+        const all = await i.guild.members.fetch();
+        res = levels.matchNames(parsed.names, [...all.values()].map((m) => ({ id: m.id, names: [m.displayName, m.user.username, m.user.globalName] })));
+        parsed.ok.push(...res.matched);
+        for (const m of res.matched) { const d = det[levels.norm(m.name)]; if (d) m.detail = d; }
+      }
+      for (const { id, value, detail } of parsed.ok) detail ? inv.setDetail(id, detail) : inv.setCount(id, value);
+      inv.flush();
+      const list = (a) => a.slice(0, 25).map((e) => `${cards.clean(e.name, 30)} (${e.value})`).join(', ');
+      let out = `✅ ${parsed.ok.length} membre(s) importé(s).`;
+      const approx = res ? res.matched.filter((m) => m.approx) : [];
+      if (approx.length) out += `\n🔎 Associés par ressemblance (à vérifier avec /invites) : ${list(approx)}`;
+      if (res?.ambiguous.length) out += `\n⚠️ Plusieurs membres possibles, à régler avec /niveaux invitations-definir : ${list(res.ambiguous)}`;
+      if (res?.missing.length) out += `\n❓ Pseudo introuvable sur le serveur (parti ou pseudo changé) : ${list(res.missing)}`;
+      return i.editReply(out.slice(0, 1900));
+    }
+    if (sub.startsWith('annonces-')) return annoncesCmd(i, sub.slice(9));
+    if (sub === 'apercu-depart') {
+      await i.deferReply({ flags: EPHEMERAL });
+      return i.editReply({ ...welcome.buildLeave(THEME(), `<@${i.user.id}>`, i.guild.name), files: [await leaveFor(i.user, i.guild)], allowedMentions: { parse: [] } });
+    }
+    if (sub === 'apercu-boost') {
+      await i.deferReply({ flags: EPHEMERAL });
+      const member = await i.guild.members.fetch(i.user.id);
+      return i.editReply({ ...welcome.buildBoost(THEME(), `<@${member.id}>`), files: [await boostFor(member)], allowedMentions: { parse: [] } });
+    }
+    if (sub === 'apercu-bienvenue') {
+      await i.deferReply({ flags: EPHEMERAL });
+      const member = await i.guild.members.fetch(i.user.id);
+      const w = welcome.build(THEME(), `<@${member.id}>`, i.guild.name, i.guild.memberCount);
+      return i.editReply({ ...w, content: `Voilà ce que verra un nouvel arrivant :\n${w.content}`, files: [await welcomeFor(member)], allowedMentions: { parse: [] } });
+    }
+  }
+}
 
-  wheel.launched = true;
-  if (wheel.collector) wheel.collector.stop();
+function init(client) {
+  const ownRegistration = !client.commands;
+  if (client.commands) { for (const d of DEFS) client.commands.set(d.name, { data: d, execute: run }); for (const d of annonces.defs) client.commands.set(d.name, { data: d, execute: annonces.run }); for (const d of moderation.defs) client.commands.set(d.name, { data: d, execute: moderation.run }); for (const d of logs.defs) client.commands.set(d.name, { data: d, execute: logs.run }); for (const d of aide.defs) client.commands.set(d.name, { data: d, execute: (i) => aide.run(i) }); for (const d of automod.defs) client.commands.set(d.name, { data: d, execute: automod.run }); for (const d of scammers.defs) client.commands.set(d.name, { data: d, execute: scammers.run }); }
+  for (const d of avent.defs) if (client.commands) client.commands.set(d.name, { data: d, execute: avent.run });
+  annonces.register(client); avent.register(client); moderation.register(client); logs.register(client); aide.register(client); automod.register(client); scammers.register(client);
 
-  // On mélange l'ordre d'affichage sur la roue, puis on tire le gagnant
-  const participants = shuffleArray(wheel.participants);
-  const winnerIndex = Math.floor(Math.random() * participants.length);
-  const winnerId = participants[winnerIndex];
-
-  await interaction.update({
-    content: '🎡 La roue tourne, préparation de l\'animation...',
-    embeds: [],
-    components: [],
+  client.on(Events.MessageCreate, async (msg) => {
+    try {
+      if (!msg.guild || msg.guild.id !== GUILD_ID() || msg.author.bot || msg.webhookId) return;
+      // Secours sans commande slash : le staff (« Gérer le serveur ») tape ça dans un salon
+      const txt = (msg.content || '').trim().toLowerCase();
+      if (['!niveaux-ici', '!niveaux-test', '!niveaux-off'].includes(txt)) {
+        if (!msg.member?.permissions?.has(PermissionFlagsBits.ManageGuild)) return;
+        if (txt === '!niveaux-off') { delete settings.announceChannelId; saveSettings(); return void msg.reply('Les annonces de niveau sont arrêtées.').catch(() => {}); }
+        if (txt === '!niveaux-ici') { settings.announceChannelId = msg.channel.id; saveSettings(); }
+        const id = announceId();
+        const ch = id ? await client.channels.fetch(id).catch(() => null) : null;
+        if (!ch?.isTextBased()) return void msg.reply('Aucun salon valide : tape `!niveaux-ici` dans le salon où tu veux les annonces.').catch(() => {});
+        try {
+          await sendLevelUp(ch, msg.author, msg.member?.displayName || msg.author.username, 4, 5);
+          if (ch.id !== msg.channel.id) msg.reply(`✅ Annonce de test envoyée dans <#${ch.id}>.`).catch(() => {});
+          else if (txt === '!niveaux-ici') msg.channel.send('✅ Les passages de niveau seront annoncés **dans ce salon** (voilà un exemple ci-dessus).').catch(() => {});
+        } catch (e) { msg.reply(`❌ Je n'arrive pas à écrire dans <#${ch.id}> : ${e.message}`).catch(() => {}); }
+        return;
+      }
+      if (excluded().includes(msg.channel.id)) return;
+      const r = levels.onMessage(msg.author.id, (msg.content || '').trim().length, msg.createdTimestamp);
+      const announce = announceId();
+      if (r && r.to > r.from && announce) {
+        const ch = await client.channels.fetch(announce).catch(() => null);
+        if (!ch?.isTextBased()) return console.error(`[niveaux] salon d'annonces ${announce} introuvable : refais /annonces-niveaux salon`);
+        await sendLevelUp(ch, msg.author, msg.member?.displayName || msg.author.username, r.from, r.to)
+          .catch((e) => console.error(`[niveaux] annonce impossible dans ${announce} :`, e.message));
+      }
+    } catch (e) { console.error('[niveaux] message', e.message); }
   });
 
-  // Récupère les pseudos affichés (la roue ne peut pas afficher des mentions cliquables, juste du texte)
-  const labels = [];
-  for (const userId of participants) {
-    const member = await interaction.guild.members.fetch(userId).catch(() => null);
-    labels.push(member ? member.displayName : 'Membre inconnu');
-  }
-
-  const gifBuffer = generateWheelGif(labels, winnerIndex);
-  const attachment = new AttachmentBuilder(gifBuffer, { name: 'roue.gif' });
-
-  const resultEmbed = new EmbedBuilder()
-    .setColor(0xF1C40F)
-    .setTitle('🎡 Roue de la fortune')
-    .setDescription(`**Lot :** ${wheel.prize}`)
-    .setImage('attachment://roue.gif');
-
-  await interaction.editReply({ content: null, embeds: [resultEmbed], files: [attachment] });
-
-  wheelGame.deleteWheel(interaction.channel.id);
-
-  let announcement = `🎡 Félicitations <@${winnerId}> ! Tu remportes **${wheel.prize}** !`;
-  if (wheel.ticketsChannelId) {
-    announcement += `\nRends-toi dans <#${wheel.ticketsChannelId}> et ouvre un ticket pour récupérer ton lot.`;
-  }
-  await interaction.channel.send(announcement);
-}
-
-// --- Système de tickets ---
-
-const TICKET_CATEGORY_LABELS = {
-  partenariat: 'Partenariat',
-  recompenses: 'Récompenses',
-  probleme: 'Signaler un problème',
-  autre: 'Autre',
-};
-
-async function handleTicketOpen(interaction) {
-  const categoryValue = interaction.values[0];
-  const categoryLabel = TICKET_CATEGORY_LABELS[categoryValue] ?? 'Autre';
-
-  const config = storage.getGuildConfig(interaction.guild.id);
-  const openTickets = { ...(config.openTickets || {}) };
-
-  const alreadyOpenChannelId = Object.keys(openTickets).find(chanId => openTickets[chanId].ownerId === interaction.user.id);
-  if (alreadyOpenChannelId) {
-    return interaction.reply({ content: `Tu as déjà un ticket ouvert : <#${alreadyOpenChannelId}>`, ephemeral: true });
-  }
-
-  await interaction.deferReply({ ephemeral: true });
-
-  const ticketNumber = (config.ticketCounter ?? 0) + 1;
-  const safeName = interaction.user.username.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20) || 'membre';
-
-  const permissionOverwrites = [
-    { id: interaction.guild.roles.everyone, deny: ['ViewChannel'] },
-    { id: interaction.user.id, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
-    { id: client.user.id, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory', 'ManageChannels'] },
-  ];
-  if (config.ticketStaffRoleIds?.length) {
-    for (const roleId of config.ticketStaffRoleIds) {
-      permissionOverwrites.push({ id: roleId, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] });
-    }
-  }
-
-  let channel;
-  try {
-    channel = await interaction.guild.channels.create({
-      name: `ticket-${safeName}-${ticketNumber}`,
-      type: ChannelType.GuildText,
-      parent: config.ticketCategoryId || undefined,
-      permissionOverwrites,
-    });
-  } catch (err) {
-    console.error('Erreur lors de la création du ticket :', err);
-    return interaction.editReply({ content: "⚠️ Je n'ai pas pu créer le salon de ticket (vérifie mes permissions)." });
-  }
-
-  const closeRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('ticket_close').setLabel('🔒 Fermer').setStyle(ButtonStyle.Danger)
-  );
-
-  const welcomeEmbed = new EmbedBuilder()
-    .setColor(0xC4D6C3)
-    .setTitle('🎫 Nouveau ticket')
-    .setDescription(
-      `Bienvenue ${interaction.user}, le staff va s'occuper de toi.\n\n` +
-      `**Catégorie :** ${categoryLabel}\n\n` +
-      (config.ticketStaffRoleIds?.length ? config.ticketStaffRoleIds.map(id => `<@&${id}>`).join(' ') : '')
-    );
-
-  await channel.send({ embeds: [welcomeEmbed], components: [closeRow] });
-
-  openTickets[channel.id] = { ownerId: interaction.user.id, category: categoryLabel, openedAt: Date.now() };
-  storage.saveGuildConfig(interaction.guild.id, { openTickets, ticketCounter: ticketNumber });
-
-  return interaction.editReply({ content: `✅ Ton ticket a été créé : ${channel}` });
-}
-
-async function handleTicketClose(interaction) {
-  const config = storage.getGuildConfig(interaction.guild.id);
-  const ticketData = config.openTickets?.[interaction.channel.id];
-
-  if (!ticketData) {
-    return interaction.reply({ content: "Ce salon n'est pas reconnu comme un ticket actif.", ephemeral: true });
-  }
-
-  const isStaff = config.ticketStaffRoleIds?.some(roleId => interaction.member.roles.cache.has(roleId));
-  if (!isStaff) {
-    return interaction.reply({ content: "Seul le staff peut fermer ce ticket.", ephemeral: true });
-  }
-
-  await interaction.reply({ content: "🔒 Fermeture du ticket dans quelques secondes..." });
-
-  // Construit un transcript texte simple des 100 derniers messages (limite technique de Discord par requête)
-  try {
-    const messages = await interaction.channel.messages.fetch({ limit: 100 });
-    const sorted = [...messages.values()].reverse();
-    const lines = sorted.map(m => {
-      const time = new Date(m.createdTimestamp).toLocaleString('fr-FR');
-      return `[${time}] ${m.author.tag} : ${m.content || '(pas de texte, pièce jointe ou embed)'}`;
-    });
-    const transcriptText = lines.join('\n') || 'Aucun message dans ce ticket.';
-
-    if (config.ticketLogsChannelId) {
-      const logsChannel = await interaction.guild.channels.fetch(config.ticketLogsChannelId).catch(() => null);
-      if (logsChannel) {
-        const attachment = new AttachmentBuilder(Buffer.from(transcriptText, 'utf-8'), { name: `${interaction.channel.name}.txt` });
-        const summaryEmbed = new EmbedBuilder()
-          .setColor(0xC4D6C3)
-          .setTitle('🎫 Ticket fermé')
-          .addFields(
-            { name: 'Ouvert par', value: `<@${ticketData.ownerId}>`, inline: true },
-            { name: 'Catégorie', value: ticketData.category, inline: true },
-            { name: 'Fermé par', value: `${interaction.user}`, inline: true },
-            { name: 'Ouvert le', value: `<t:${Math.floor(ticketData.openedAt / 1000)}:f>` },
-          );
-        await logsChannel.send({ embeds: [summaryEmbed], files: [attachment] });
-      }
-    }
-  } catch (err) {
-    console.error('Erreur lors de la génération du transcript de ticket :', err);
-  }
-
-  const openTickets = { ...config.openTickets };
-  delete openTickets[interaction.channel.id];
-  storage.saveGuildConfig(interaction.guild.id, { openTickets });
-
-  setTimeout(() => interaction.channel.delete().catch(() => {}), 5000);
-}
-
-// --- Tirage des gagnants ---
-async function endGiveaway(giveaway) {
-  const giveaways = storage.getGiveaways();
-  const stored = giveaways.find(g => g.messageId === giveaway.messageId);
-  if (!stored || stored.ended) return;
-
-  stored.ended = true;
-
-  // On exclut les membres blacklistés au moment du tirage, par sécurité
-  const blacklist = storage.getBlacklist().map(e => e.userId);
-  const eligible = stored.participants.filter(id => !blacklist.includes(id));
-
-  const winners = await drawWinners({
-    guildId: stored.guildId,
-    candidateIds: eligible,
-    count: stored.winnersCount,
-    boosterBonus: stored.boosterBonus,
+  client.on(Events.GuildMemberAdd, async (member) => {
+    try {
+      if (member.guild.id !== GUILD_ID() || member.user.bot) return;
+      const ch = await client.channels.fetch(process.env.WELCOME_CHANNEL_ID || member.guild.systemChannelId || '0').catch(() => null);
+      if (!ch?.isTextBased()) return;
+      await ch.send({ ...welcome.build(THEME(), `<@${member.id}>`, member.guild.name, member.guild.memberCount), files: [await welcomeFor(member)], allowedMentions: { users: [member.id] } });
+    } catch (e) { console.error('[bienvenue]', e.message); }
   });
 
-  stored.winners = winners; // sauvegardé pour pouvoir faire un /reroll plus tard
-  storage.saveGiveaways(giveaways);
+  // Boost du serveur : message de remerciement (détecte le passage « pas de boost » → « boost »)
+  client.on(Events.GuildMemberUpdate, async (oldM, newM) => {
+    try {
+      if (newM.guild.id !== GUILD_ID() || newM.user.bot || oldM.premiumSince || !newM.premiumSince) return;
+      const id = process.env.BOOST_CHANNEL_ID || process.env.WELCOME_CHANNEL_ID || newM.guild.systemChannelId || '0';
+      const ch = await client.channels.fetch(id).catch(() => null);
+      if (!ch?.isTextBased()) return;
+      await ch.send({ ...welcome.buildBoost(THEME(), `<@${newM.id}>`), files: [await boostFor(newM)], allowedMentions: { users: [newM.id] } });
+    } catch (e) { console.error('[boost]', e.message); }
+  });
 
-  try {
-    const channel = await client.channels.fetch(stored.channelId);
-    const message = await channel.messages.fetch(stored.messageId);
+  // Départ : message d'au revoir + (si activé) remise à zéro de l'XP
+  client.on(Events.GuildMemberRemove, async (m) => {
+    try {
+      if (m.guild.id !== GUILD_ID() || m.user?.bot) return;
+      if (flag('LEVELS_RESET_ON_LEAVE', false)) levels.forget(m.id);
+      const id = process.env.LEAVE_CHANNEL_ID || process.env.WELCOME_CHANNEL_ID || m.guild.systemChannelId || '0';
+      const ch = await client.channels.fetch(id).catch(() => null);
+      if (!ch?.isTextBased()) return;
+      await ch.send({ ...welcome.buildLeave(THEME(), `<@${m.id}>`, m.guild.name), files: [await leaveFor(m.user, m.guild)], allowedMentions: { parse: [] } });
+    } catch (e) { console.error('[depart]', e.message); }
+  });
+  client.on(Events.GuildBanAdd, (b) => { if (b.guild.id === GUILD_ID() && flag('LEVELS_RESET_ON_BAN', true)) levels.forget(b.user.id); });
 
-    const embed = buildGiveawayEmbed({
-      prize: stored.prize,
-      winnersCount: stored.winnersCount,
-      participantsCount: stored.participants.length,
-      ended: true,
-      winners,
-      boosterBonus: stored.boosterBonus,
-      conditions: stored.conditions,
-      host: stored.hostName ? { name: stored.hostName, avatarURL: stored.hostAvatarURL } : null,
+  if (ownRegistration) {
+    client.on(Events.InteractionCreate, (i) => {
+      if (i.isChatInputCommand() && avent.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) avent.run(i).catch((e) => console.error('[avent]', e));
+      if (i.isChatInputCommand() && annonces.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) annonces.run(i).catch((e) => console.error('[annonces]', e));
+      if (i.isChatInputCommand() && moderation.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) moderation.run(i).catch((e) => console.error('[moderation]', e));
+      if (i.isChatInputCommand() && logs.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) logs.run(i).catch((e) => console.error('[logs]', e));
+      if (i.isChatInputCommand() && automod.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) automod.run(i).catch((e) => console.error('[automod]', e));
+      if (i.isChatInputCommand() && scammers.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) scammers.run(i).catch((e) => console.error('[scam]', e));
+      if (i.isChatInputCommand() && aide.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) aide.run(i, () => [...DEFS, ...annonces.defs, ...avent.defs, ...moderation.defs, ...logs.defs, ...aide.defs, ...automod.defs, ...scammers.defs]).catch((e) => console.error('[aide]', e));
+      if (i.isChatInputCommand() && ['rang', 'classement', 'niveaux', 'invites', 'annonces-niveaux'].includes(i.commandName) && i.guild?.id === GUILD_ID()) run(i).catch((e) => console.error('[niveaux]', e));
     });
-    await message.edit({ embeds: [embed], components: [] });
-
-    if (winners.length) {
-      await channel.send(`🎉 Félicitations ${winners.map(id => `<@${id}>`).join(', ')} ! Tu remportes **${stored.prize}** !`);
-    } else {
-      await channel.send(`😢 Aucun participant valide pour le giveaway **${stored.prize}**.`);
-    }
-  } catch (err) {
-    console.error('Erreur lors de la clôture du giveaway :', err);
   }
+  inv = invitelog.register(client);
+  const start = async () => {
+    const guild = client.guilds.cache.get(GUILD_ID());
+    if (!guild) return console.error('[niveaux] GUILD_ID introuvable : vérifie la variable GUILD_ID');
+    await inv.init(guild);
+    if (ownRegistration) for (const d of [...DEFS, ...annonces.defs, ...avent.defs, ...moderation.defs, ...logs.defs, ...aide.defs, ...automod.defs, ...scammers.defs]) await guild.commands.create(d.toJSON()).catch(() => {});
+    levels.backupIfNeeded();
+    console.log('[niveaux] 🏆 niveaux et bienvenue prêts');
+    console.log(announceId() ? `[niveaux] annonces de niveau dans le salon ${announceId()}` : '[niveaux] ⚠️ aucun salon d’annonces de niveau : tape /annonces-niveaux salon (ou !niveaux-ici dans le salon voulu)');
+  };
+  if (client.isReady()) start(); else client.once(Events.ClientReady, start);
 }
 
-// Vérifie toutes les 30 secondes si un giveaway doit se terminer
-function startGiveawayLoop() {
-  setInterval(async () => {
-    const giveaways = storage.getGiveaways();
-    const toEnd = giveaways.filter(g => !g.ended && g.endTimestamp <= Date.now());
-    for (const g of toEnd) {
-      await endGiveaway(g);
-    }
-  }, 30 * 1000);
-}
-
-// --- Retrait automatique de la blacklist ---
-async function checkBlacklist() {
-  const blacklist = storage.getBlacklist();
-  const now = Date.now();
-  const stillActive = [];
-
-  for (const entry of blacklist) {
-    if (entry.endTimestamp > now) {
-      stillActive.push(entry);
-      continue;
-    }
-
-    try {
-      const guild = await client.guilds.fetch(entry.guildId);
-      const member = await guild.members.fetch(entry.userId).catch(() => null);
-      const roleId = process.env.BLACKLIST_ROLE_ID;
-
-      if (member && roleId && member.roles.cache.has(roleId)) {
-        await member.roles.remove(roleId, 'Fin de la période de blacklist');
-      }
-
-      const logChannelId = process.env.LOG_CHANNEL_ID;
-      if (logChannelId) {
-        const logChannel = await client.channels.fetch(logChannelId).catch(() => null);
-        if (logChannel) {
-          await logChannel.send(`✅ <@${entry.userId}> n'est plus blacklisté des giveaways.`);
-        }
-      }
-    } catch (err) {
-      console.error('Erreur lors du retrait de blacklist :', err);
-    }
-  }
-
-  storage.saveBlacklist(stillActive);
-}
-
-// Vérifie toutes les 5 minutes les blacklists à retirer
-function startBlacklistLoop() {
-  setInterval(checkBlacklist, 5 * 60 * 1000);
-}
-
-// --- Récap hebdomadaire ---
-
-function getWeekKey(date) {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  const weekNo = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
-  return `${d.getUTCFullYear()}-W${weekNo}`;
-}
-
-async function sendWeeklyRecap(guild, config) {
-  const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-
-  const members = await guild.members.fetch();
-  const newMembers = members.filter(m => m.joinedTimestamp && m.joinedTimestamp >= oneWeekAgo);
-  const newBoosters = members.filter(m => m.premiumSince && m.premiumSince.getTime() >= oneWeekAgo);
-
-  const topActive = messageStats.getLeaderboard(guild.id, 'semaine', 5);
-
-  const endedGiveaways = storage.getGiveaways().filter(
-    g => g.guildId === guild.id && g.ended && g.endTimestamp >= oneWeekAgo
-  );
-
-  const embed = new EmbedBuilder()
-    .setColor(0xC4D6C3)
-    .setTitle('📊 Récap de la semaine')
-    .addFields(
-      { name: '👋 Nouveaux membres', value: `${newMembers.size}`, inline: true },
-      { name: '🚀 Nouveaux boosters', value: `${newBoosters.size}`, inline: true },
-      { name: '🎉 Giveaways terminés', value: `${endedGiveaways.length}`, inline: true },
-      {
-        name: '💬 Membres les plus actifs',
-        value: topActive.length
-          ? topActive.map((e, i) => `${i + 1}. <@${e.userId}> — ${e.count} message(s)`).join('\n')
-          : 'Pas assez de données',
-      },
-    )
-    .setFooter({ text: 'Récap automatique hebdomadaire' });
-
-  const channel = await guild.channels.fetch(config.recapChannelId).catch(() => null);
-  if (channel) await channel.send({ embeds: [embed] }).catch(() => {});
-}
-
-function startWeeklyRecapLoop() {
-  setInterval(async () => {
-    const now = new Date();
-    if (now.getUTCDay() !== 0) return; // seulement le dimanche
-
-    const currentWeek = getWeekKey(now);
-
-    for (const guild of client.guilds.cache.values()) {
-      const config = storage.getGuildConfig(guild.id);
-      if (!config.recapChannelId) continue;
-      if ((config.recapHourUTC ?? 18) !== now.getUTCHours()) continue;
-      if (config.lastRecapWeek === currentWeek) continue; // déjà envoyé cette semaine
-
-      await sendWeeklyRecap(guild, config).catch(err => console.error('Erreur récap hebdo :', err));
-      storage.saveGuildConfig(guild.id, { lastRecapWeek: currentWeek });
-    }
-  }, 60 * 60 * 1000); // vérifie une fois par heure
-}
-
-// --- Salon vocal avec stats en direct ---
-
-async function updateVoiceStatsChannels() {
-  for (const guild of client.guilds.cache.values()) {
-    const config = storage.getGuildConfig(guild.id);
-    if (!config.statsChannelId) continue;
-
-    const channel = await guild.channels.fetch(config.statsChannelId).catch(() => null);
-    if (!channel) continue;
-
-    const newName = `ヾ✧˚・️☆ ${guild.memberCount} Membres`;
-    if (channel.name !== newName) {
-      await channel.setName(newName).catch(err => console.error('Erreur renommage salon stats :', err));
-    }
-  }
-}
-
-function startVoiceStatsLoop() {
-  setInterval(updateVoiceStatsChannels, 15 * 60 * 1000); // Discord limite la fréquence des renommages
-}
-
-// --- Calendrier de l'Avent ---
-
-async function handleAdventOpen(interaction) {
-  const day = parseInt(interaction.customId.split(':')[1], 10);
-  const config = storage.getGuildConfig(interaction.guild.id);
-
-  if (!config.adventYear || !isDayUnlocked(day, config.adventYear)) {
-    return interaction.reply({ content: "🔒 Cette case n'est pas encore débloquée, reviens à sa date !", ephemeral: true });
-  }
-
-  const dayContent = config.adventContent?.[day];
-  if (!dayContent || !dayContent.prize) {
-    return interaction.reply({ content: "Aucune surprise n'a été configurée pour ce jour, désolé ! 😢", ephemeral: true });
-  }
-
-  // Inscrit le membre au tirage au sort du soir (une seule fois par jour, même s'il reclique)
-  const adventEntries = { ...(config.adventEntries || {}) };
-  const dayEntries = adventEntries[day] || [];
-  const alreadyEntered = dayEntries.includes(interaction.user.id);
-  if (!alreadyEntered) {
-    adventEntries[day] = [...dayEntries, interaction.user.id];
-    storage.saveGuildConfig(interaction.guild.id, { adventEntries });
-  }
-
-  const embed = new EmbedBuilder()
-    .setColor(0xC4D6C3)
-    .setTitle(`🎁 ${day} décembre`)
-    .setDescription(
-      `${dayContent.prize}\n\n` +
-      (alreadyEntered
-        ? '✅ Tu es déjà inscrit(e) au tirage au sort de ce soir !'
-        : '✅ Tu es maintenant inscrit(e) au tirage au sort de ce soir ! Plus tu es actif(ve) sur le serveur aujourd\'hui, plus tu as de chances.')
-    );
-
-  return interaction.reply({ embeds: [embed], ephemeral: true });
-}
-
-function getParisDateParts(date = new Date()) {
-  const parts = new Intl.DateTimeFormat('fr-FR', {
-    timeZone: 'Europe/Paris',
-    day: 'numeric',
-    month: 'numeric',
-  }).formatToParts(date);
-  const day = parseInt(parts.find(p => p.type === 'day').value, 10);
-  const month = parseInt(parts.find(p => p.type === 'month').value, 10);
-  return { day, month };
-}
-
-// Poste la question/devinette du jour dans le salon du calendrier, une seule fois par jour
-async function postAdventQuestionIfNeeded(guild, config, todayDay) {
-  if (config.adventLastQuestionDay === todayDay) return; // déjà posté aujourd'hui
-
-  const dayContent = config.adventContent?.[todayDay];
-  if (!dayContent?.question) {
-    storage.saveGuildConfig(guild.id, { adventLastQuestionDay: todayDay });
-    return;
-  }
-
-  try {
-    const channel = await guild.channels.fetch(config.adventChannelId);
-    const embed = new EmbedBuilder()
-      .setColor(0xC4D6C3)
-      .setTitle(`🎄 Question du ${todayDay} décembre`)
-      .setDescription(dayContent.question)
-      .setFooter({ text: 'Répondez dans ce salon pour participer à la discussion !' });
-    await channel.send({ embeds: [embed] });
-  } catch (err) {
-    console.error('Erreur lors de la publication de la question du jour :', err);
-  }
-
-  storage.saveGuildConfig(guild.id, { adventLastQuestionDay: todayDay });
-}
-
-// Tire au sort le gagnant du jour parmi les membres ayant cliqué sur la case,
-// avec des entrées bonus selon leur activité (messages envoyés) ce jour-là
-async function runAdventDrawIfNeeded(guild, config, todayDay) {
-  if (config.adventLastDrawDay === todayDay) return; // déjà tiré aujourd'hui
-
-  const entries = config.adventEntries?.[todayDay] || [];
-  const dayContent = config.adventContent?.[todayDay];
-
-  if (entries.length > 0 && dayContent?.prize) {
-    const MAX_BONUS = 5;
-    const pool = [];
-    for (const userId of entries) {
-      const stats = messageStats.getUserStats(guild.id, userId);
-      const bonusEntries = Math.min(stats.jour, MAX_BONUS);
-      for (let i = 0; i < 1 + bonusEntries; i++) pool.push(userId);
-    }
-
-    const winnerId = shuffleArray(pool)[0];
-
-    try {
-      const channel = await guild.channels.fetch(config.adventChannelId);
-      let announcement = `🎄 Le tirage du **${todayDay} décembre** est terminé ! Félicitations <@${winnerId}>, tu remportes : **${dayContent.prize}** !`;
-      if (config.ticketsChannelId) {
-        announcement += `\nRends-toi dans <#${config.ticketsChannelId}> et ouvre un ticket pour récupérer ton lot.`;
-      }
-      await channel.send(announcement);
-    } catch (err) {
-      console.error('Erreur lors de l\'annonce du tirage de l\'Avent :', err);
-    }
-  }
-
-  storage.saveGuildConfig(guild.id, { adventLastDrawDay: todayDay });
-}
-
-// Rafraîchit chaque jour les cases du calendrier (verrouillées/déverrouillées),
-// poste la question du jour, et lance le tirage au sort quotidien à l'heure configurée
-async function updateAdventCalendars() {
-  for (const guild of client.guilds.cache.values()) {
-    const config = storage.getGuildConfig(guild.id);
-    if (!config.adventChannelId || !config.adventMessageId || !config.adventYear) continue;
-
-    const { day: todayDay, month: todayMonth } = getParisDateParts();
-    const nowUTCHour = new Date().getUTCHours();
-
-    if (todayMonth === 12 && todayDay <= 24) {
-      await postAdventQuestionIfNeeded(guild, config, todayDay);
-
-      const drawHour = config.adventDrawHourUTC ?? 19;
-      if (nowUTCHour === drawHour) {
-        await runAdventDrawIfNeeded(guild, config, todayDay);
-      }
-    }
-
-    // On arrête de rafraîchir les cases une fois toutes débloquées depuis un moment (après Noël)
-    if (!(todayMonth === 12 && todayDay <= 26)) continue;
-
-    try {
-      const channel = await guild.channels.fetch(config.adventChannelId);
-      const message = await channel.messages.fetch(config.adventMessageId);
-      await message.edit({ embeds: [buildAdventEmbed()], components: buildAdventComponents(config.adventYear) });
-    } catch (err) {
-      console.error('Erreur lors de la mise à jour du calendrier de l\'Avent :', err);
-    }
-  }
-}
-
-function startAdventLoop() {
-  setInterval(updateAdventCalendars, 60 * 60 * 1000); // vérifie une fois par heure
-}
-
-client.once(Events.ClientReady, async c => {
-  console.log(`✅ Connecté en tant que ${c.user.tag}`);
-
-  // Enregistre automatiquement les commandes slash (/blacklist, /creer-gw, etc.)
-  // sur le serveur Discord à chaque démarrage, pour ne pas avoir à le faire manuellement.
-  try {
-    const commandsData = [...client.commands.values()].map(cmd => cmd.data.toJSON());
-    await client.application.commands.set(commandsData, process.env.GUILD_ID);
-    console.log(`📝 ${commandsData.length} commande(s) slash enregistrée(s) sur le serveur.`);
-  } catch (err) {
-    console.error('💥 Erreur lors de l\'enregistrement des commandes slash :', err.message);
-  }
-
-  checkBlacklist();
-  startBlacklistLoop();
-  startGiveawayLoop();
-  startWeeklyRecapLoop();
-  updateVoiceStatsChannels();
-  startVoiceStatsLoop();
-  startAdventLoop();
-});
-
-client.on('error', (err) => console.error('💥 Erreur du client Discord :', err));
-client.on('shardError', (err) => console.error('💥 Erreur de connexion (shard) :', err));
-client.on('warn', (msg) => console.warn('⚠️ Avertissement Discord :', msg));
-
-// Filet de sécurité : si on n'est toujours pas connecté après 20 secondes,
-// on l'affiche clairement plutôt que de rester dans le silence.
-setTimeout(() => {
-  if (!client.isReady()) {
-    console.log('⏳ Toujours pas connecté après 20 secondes. Vérifie le token et les intents (Server Members Intent) sur le Developer Portal.');
-  }
-}, 20000);
-
-client.login(process.env.DISCORD_TOKEN).catch(err => {
-  console.error('💥 Échec de la connexion à Discord :', err.message);
-});
+module.exports = { init };
