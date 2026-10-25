@@ -10,14 +10,16 @@
 //   WELCOME_BANNER_URL        lien d'une image de fond (sinon assets/banniere.png, sinon dégradé de la saison)
 //   WELCOME_USE_SERVER_BANNER true : reprendre la bannière du serveur comme fond (désactivé par défaut)
 //   ANNONCE_CHANNEL_ID, ANNONCE_ROLE_ID  /annonce-msp : salon et rôle pingé par défaut (facultatif, sinon choisis-les dans la commande)
-//   LEVELS_ANNOUNCE_CHANNEL_ID  salon où annoncer les passages de niveau (laisse vide tant que DraftBot les annonce encore)
+//   LEVELS_ANNOUNCE_CHANNEL_ID  salon où annoncer les passages de niveau. Plus besoin de le mettre ici : tape /annonces-niveaux salon dans Discord (la commande a la priorité)
 //   LEVELS_THEME                facultatif : force la saison (halloween | automne | noel | hiver). Sinon elle change toute seule avec la date
 //   LEVELS_MESSAGE              facultatif : ton propre message de passage de niveau ({user} et {level})
 //   LEVELS_VIEW_OTHERS          true (défaut) : les membres peuvent voir le niveau des autres ; false pour l'interdire
 //   LEVELS_RESET_ON_LEAVE       true : un membre qui quitte le serveur perd son XP (défaut : false)
 //   LEVELS_RESET_ON_BAN         true : un membre banni perd son XP (défaut : true)
 //   LEVELS_EXCLUDED_CHANNEL_IDS salons sans XP (par défaut : les mêmes que pour les bonbons)
-const { Events, SlashCommandBuilder, PermissionFlagsBits, AttachmentBuilder, EmbedBuilder } = require('discord.js');
+const fs = require('fs');
+const path = require('path');
+const { Events, SlashCommandBuilder, PermissionFlagsBits, AttachmentBuilder, EmbedBuilder, ChannelType } = require('discord.js');
 const levels = require('./levels');
 const cards = require('./cards');
 const welcome = require('./welcome');
@@ -27,10 +29,8 @@ const moderation = require('./moderation');
 const logs = require('./logs');
 const aide = require('./aide');
 const automod = require('./automod');
-const statut = require('./statut');
-const rappels = require('./rappels');
-const scammers = require('./scammers');
 const avent = require('./avent');
+const scammers = require('./scammers');
 
 const EPHEMERAL = 64;
 let inv = null; // journal des invitations (créé dans init)
@@ -45,12 +45,26 @@ const themes = require('./themes');
 const THEME = () => themes.currentName();
 const staffOk = (i) => i.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
 
+// Réglages modifiables depuis Discord (volume Railway) : le salon des annonces de niveau
+const SETTINGS_DIR = process.env.DATA_DIR || (fs.existsSync('/app/data') ? '/app/data' : path.join(__dirname, 'data'));
+const SETTINGS_FILE = path.join(SETTINGS_DIR, 'niveaux-settings.json');
+let settings = {};
+try { if (fs.existsSync(SETTINGS_FILE)) settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')); } catch (e) { console.error('[niveaux] réglages illisibles', e.message); }
+function saveSettings() { try { fs.mkdirSync(SETTINGS_DIR, { recursive: true }); const tmp = `${SETTINGS_FILE}.tmp`; fs.writeFileSync(tmp, JSON.stringify(settings)); fs.renameSync(tmp, SETTINGS_FILE); } catch (e) { console.error('[niveaux] réglages non sauvegardés', e.message); } }
+const announceId = () => settings.announceChannelId || (process.env.LEVELS_ANNOUNCE_CHANNEL_ID || '').trim();
+
 const DEFS = [
   new SlashCommandBuilder().setName('rang').setDescription('Ta carte de niveau')
     .addUserOption((o) => o.setName('membre').setDescription('Voir la carte d’un autre membre')),
   new SlashCommandBuilder().setName('invites').setDescription('Voir ton nombre d’invitations')
     .addUserOption((o) => o.setName('membre').setDescription('Voir celui d’un autre membre')),
   new SlashCommandBuilder().setName('classement').setDescription('Le top 10 des niveaux du serveur'),
+  new SlashCommandBuilder().setName('annonces-niveaux').setDescription('(Staff) Régler les annonces de passage de niveau')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand((s) => s.setName('salon').setDescription('Choisir le salon où le bot annonce les passages de niveau')
+      .addChannelOption((o) => o.setName('salon').setDescription('Salon des annonces de niveau').addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement).setRequired(true)))
+    .addSubcommand((s) => s.setName('test').setDescription('Envoyer une fausse annonce de niveau pour vérifier que tout marche'))
+    .addSubcommand((s) => s.setName('off').setDescription('Arrêter les annonces de niveau')),
   new SlashCommandBuilder().setName('niveaux').setDescription('(Staff) Gérer les niveaux et la bienvenue')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addSubcommand((s) => s.setName('definir').setDescription('Fixer le niveau d’un membre')
@@ -66,7 +80,11 @@ const DEFS = [
     .addSubcommand((s) => s.setName('invitations-importer').setDescription('Importer les invitations d’InviteLogger (une ligne : pseudo;nombre)')
       .addAttachmentOption((o) => o.setName('fichier').setDescription('Fichier .txt ou .csv').setRequired(true)))
     .addSubcommand((s) => s.setName('apercu-depart').setDescription('Voir le message d’au revoir avec ton profil'))
-    .addSubcommand((s) => s.setName('apercu-boost').setDescription('Voir le message de remerciement pour un boost avec ton profil')),
+    .addSubcommand((s) => s.setName('apercu-boost').setDescription('Voir le message de remerciement pour un boost avec ton profil'))
+    .addSubcommand((s) => s.setName('annonces-salon').setDescription('Choisir le salon où le bot annonce les passages de niveau')
+      .addChannelOption((o) => o.setName('salon').setDescription('Salon des annonces de niveau').addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement).setRequired(true)))
+    .addSubcommand((s) => s.setName('annonces-test').setDescription('Envoyer une fausse annonce de niveau pour vérifier que tout marche'))
+    .addSubcommand((s) => s.setName('annonces-off').setDescription('Arrêter les annonces de niveau')),
 ];
 
 async function avatarOf(user) { return user.displayAvatarURL({ extension: 'png', size: 256, forceStatic: true }); }
@@ -96,8 +114,52 @@ async function leaveFor(user, guild) {
   return new AttachmentBuilder(buf, { name: 'depart.png' });
 }
 
+/** Envoie l'annonce de passage de niveau (carte image, ou texte seul si l'image échoue). */
+async function sendLevelUp(ch, user, displayName, from, to) {
+  let files = [];
+  try {
+    const buf = await cards.levelUpCard({ name: displayName, avatarUrl: await avatarOf(user), from, to, theme: THEME() });
+    files = [new AttachmentBuilder(buf, { name: 'niveau.png' })];
+  } catch (e) { console.error('[niveaux] carte de niveau impossible, envoi du texte seul :', e.message); }
+  return ch.send({ content: themes.levelMessage(THEME(), `<@${user.id}>`, to), files, allowedMentions: { users: [user.id] } });
+}
+
+/** /annonces-niveaux salon | test | off (et les mêmes sous-commandes de /niveaux). */
+async function annoncesCmd(i, sub) {
+  if (sub === 'salon') {
+    const ch = i.options.getChannel('salon');
+    settings.announceChannelId = ch.id; saveSettings();
+    const me = ch.permissionsFor?.(i.guild.members.me);
+    const missing = me ? [['ViewChannel', 'voir le salon'], ['SendMessages', 'envoyer des messages'], ['AttachFiles', 'joindre des fichiers']].filter(([f]) => !me.has(PermissionFlagsBits[f])).map(([, t]) => t) : [];
+    return i.reply({ content: `✅ Les passages de niveau seront annoncés dans <#${ch.id}>.${missing.length ? `\n⚠️ Il manque au bot ces droits dans ce salon : **${missing.join(', ')}**. Ajoute-les sinon rien ne s’affichera.` : ''}\nTape \`/annonces-niveaux test\` pour vérifier.`, flags: EPHEMERAL });
+  }
+  if (sub === 'off') {
+    delete settings.announceChannelId; saveSettings();
+    const env = (process.env.LEVELS_ANNOUNCE_CHANNEL_ID || '').trim();
+    return i.reply({ content: env ? `Salon réglé par commande retiré, mais la variable Railway LEVELS_ANNOUNCE_CHANNEL_ID (<#${env}>) est encore remplie : vide-la aussi pour tout arrêter.` : 'Les annonces de niveau sont arrêtées.', flags: EPHEMERAL });
+  }
+  if (sub === 'test') {
+    await i.deferReply({ flags: EPHEMERAL });
+    const id = announceId();
+    if (!id) return i.editReply('Aucun salon n’est réglé : tape d’abord `/annonces-niveaux salon`.');
+    const ch = await i.client.channels.fetch(id).catch(() => null);
+    if (!ch?.isTextBased()) return i.editReply(`Je ne trouve pas le salon <#${id}> (supprimé, ou je n’y ai pas accès). Choisis-en un autre avec \`/annonces-niveaux salon\`.`);
+    try {
+      const member = await i.guild.members.fetch(i.user.id).catch(() => null);
+      await sendLevelUp(ch, i.user, member?.displayName || i.user.username, 4, 5);
+      return i.editReply(`✅ Annonce de test envoyée dans <#${id}>. Si tu l’y vois, les vraies annonces fonctionneront aussi.`);
+    } catch (e) {
+      return i.editReply(`❌ Impossible d’écrire dans <#${id}> : ${e.message}\nVérifie que le bot peut **voir le salon, envoyer des messages et joindre des fichiers**.`);
+    }
+  }
+}
+
 async function run(i) {
   const name = i.commandName;
+  if (name === 'annonces-niveaux') {
+    if (!staffOk(i)) return i.reply({ content: 'Commande réservée au staff 🔒', flags: EPHEMERAL });
+    return annoncesCmd(i, i.options.getSubcommand());
+  }
   if (name === 'rang') {
     await i.deferReply();
     const user = i.options.getUser('membre') || i.user;
@@ -195,6 +257,7 @@ async function run(i) {
       if (res?.missing.length) out += `\n❓ Pseudo introuvable sur le serveur (parti ou pseudo changé) : ${list(res.missing)}`;
       return i.editReply(out.slice(0, 1900));
     }
+    if (sub.startsWith('annonces-')) return annoncesCmd(i, sub.slice(9));
     if (sub === 'apercu-depart') {
       await i.deferReply({ flags: EPHEMERAL });
       return i.editReply({ ...welcome.buildLeave(THEME(), `<@${i.user.id}>`, i.guild.name), files: [await leaveFor(i.user, i.guild)], allowedMentions: { parse: [] } });
@@ -215,22 +278,37 @@ async function run(i) {
 
 function init(client) {
   const ownRegistration = !client.commands;
-  if (client.commands) { for (const d of DEFS) client.commands.set(d.name, { data: d, execute: run }); for (const d of annonces.defs) client.commands.set(d.name, { data: d, execute: annonces.run }); for (const d of moderation.defs) client.commands.set(d.name, { data: d, execute: moderation.run }); for (const d of logs.defs) client.commands.set(d.name, { data: d, execute: logs.run }); for (const d of aide.defs) client.commands.set(d.name, { data: d, execute: (i) => aide.run(i) }); for (const d of automod.defs) client.commands.set(d.name, { data: d, execute: automod.run }); for (const d of statut.defs) client.commands.set(d.name, { data: d, execute: statut.run }); for (const d of rappels.defs) client.commands.set(d.name, { data: d, execute: (i) => rappels.run(i, client) }); for (const d of scammers.defs) client.commands.set(d.name, { data: d, execute: scammers.run }); }
+  if (client.commands) { for (const d of DEFS) client.commands.set(d.name, { data: d, execute: run }); for (const d of annonces.defs) client.commands.set(d.name, { data: d, execute: annonces.run }); for (const d of moderation.defs) client.commands.set(d.name, { data: d, execute: moderation.run }); for (const d of logs.defs) client.commands.set(d.name, { data: d, execute: logs.run }); for (const d of aide.defs) client.commands.set(d.name, { data: d, execute: (i) => aide.run(i) }); for (const d of automod.defs) client.commands.set(d.name, { data: d, execute: automod.run }); for (const d of scammers.defs) client.commands.set(d.name, { data: d, execute: scammers.run }); }
   for (const d of avent.defs) if (client.commands) client.commands.set(d.name, { data: d, execute: avent.run });
-  annonces.register(client); avent.register(client); moderation.register(client); logs.register(client); aide.register(client); automod.register(client); statut.register(client); rappels.register(client); scammers.register(client);
+  annonces.register(client); avent.register(client); moderation.register(client); logs.register(client); aide.register(client); automod.register(client); scammers.register(client);
 
   client.on(Events.MessageCreate, async (msg) => {
     try {
       if (!msg.guild || msg.guild.id !== GUILD_ID() || msg.author.bot || msg.webhookId) return;
+      // Secours sans commande slash : le staff (« Gérer le serveur ») tape ça dans un salon
+      const txt = (msg.content || '').trim().toLowerCase();
+      if (['!niveaux-ici', '!niveaux-test', '!niveaux-off'].includes(txt)) {
+        if (!msg.member?.permissions?.has(PermissionFlagsBits.ManageGuild)) return;
+        if (txt === '!niveaux-off') { delete settings.announceChannelId; saveSettings(); return void msg.reply('Les annonces de niveau sont arrêtées.').catch(() => {}); }
+        if (txt === '!niveaux-ici') { settings.announceChannelId = msg.channel.id; saveSettings(); }
+        const id = announceId();
+        const ch = id ? await client.channels.fetch(id).catch(() => null) : null;
+        if (!ch?.isTextBased()) return void msg.reply('Aucun salon valide : tape `!niveaux-ici` dans le salon où tu veux les annonces.').catch(() => {});
+        try {
+          await sendLevelUp(ch, msg.author, msg.member?.displayName || msg.author.username, 4, 5);
+          if (ch.id !== msg.channel.id) msg.reply(`✅ Annonce de test envoyée dans <#${ch.id}>.`).catch(() => {});
+          else if (txt === '!niveaux-ici') msg.channel.send('✅ Les passages de niveau seront annoncés **dans ce salon** (voilà un exemple ci-dessus).').catch(() => {});
+        } catch (e) { msg.reply(`❌ Je n'arrive pas à écrire dans <#${ch.id}> : ${e.message}`).catch(() => {}); }
+        return;
+      }
       if (excluded().includes(msg.channel.id)) return;
       const r = levels.onMessage(msg.author.id, (msg.content || '').trim().length, msg.createdTimestamp);
-      const announce = process.env.LEVELS_ANNOUNCE_CHANNEL_ID;
+      const announce = announceId();
       if (r && r.to > r.from && announce) {
         const ch = await client.channels.fetch(announce).catch(() => null);
-        if (ch?.isTextBased()) {
-          const buf = await cards.levelUpCard({ name: msg.member?.displayName || msg.author.username, avatarUrl: await avatarOf(msg.author), from: r.from, to: r.to, theme: THEME() });
-          ch.send({ content: themes.levelMessage(THEME(), `<@${msg.author.id}>`, r.to), files: [new AttachmentBuilder(buf, { name: 'niveau.png' })], allowedMentions: { users: [msg.author.id] } }).catch(() => {});
-        }
+        if (!ch?.isTextBased()) return console.error(`[niveaux] salon d'annonces ${announce} introuvable : refais /annonces-niveaux salon`);
+        await sendLevelUp(ch, msg.author, msg.member?.displayName || msg.author.username, r.from, r.to)
+          .catch((e) => console.error(`[niveaux] annonce impossible dans ${announce} :`, e.message));
       }
     } catch (e) { console.error('[niveaux] message', e.message); }
   });
@@ -275,11 +353,9 @@ function init(client) {
       if (i.isChatInputCommand() && moderation.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) moderation.run(i).catch((e) => console.error('[moderation]', e));
       if (i.isChatInputCommand() && logs.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) logs.run(i).catch((e) => console.error('[logs]', e));
       if (i.isChatInputCommand() && automod.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) automod.run(i).catch((e) => console.error('[automod]', e));
-      if (i.isChatInputCommand() && statut.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) statut.run(i).catch((e) => console.error('[statut]', e));
-      if (i.isChatInputCommand() && rappels.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) rappels.run(i, client).catch((e) => console.error('[rappels]', e));
-      if (i.isChatInputCommand() && scammers.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) scammers.run(i).catch((e) => console.error('[scammers]', e));
-      if (i.isChatInputCommand() && aide.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) aide.run(i, () => [...DEFS, ...annonces.defs, ...avent.defs, ...moderation.defs, ...logs.defs, ...aide.defs, ...automod.defs, ...statut.defs, ...rappels.defs, ...scammers.defs]).catch((e) => console.error('[aide]', e));
-      if (i.isChatInputCommand() && ['rang', 'classement', 'niveaux', 'invites'].includes(i.commandName) && i.guild?.id === GUILD_ID()) run(i).catch((e) => console.error('[niveaux]', e));
+      if (i.isChatInputCommand() && scammers.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) scammers.run(i).catch((e) => console.error('[scam]', e));
+      if (i.isChatInputCommand() && aide.NAMES.includes(i.commandName) && i.guild?.id === GUILD_ID()) aide.run(i, () => [...DEFS, ...annonces.defs, ...avent.defs, ...moderation.defs, ...logs.defs, ...aide.defs, ...automod.defs, ...scammers.defs]).catch((e) => console.error('[aide]', e));
+      if (i.isChatInputCommand() && ['rang', 'classement', 'niveaux', 'invites', 'annonces-niveaux'].includes(i.commandName) && i.guild?.id === GUILD_ID()) run(i).catch((e) => console.error('[niveaux]', e));
     });
   }
   inv = invitelog.register(client);
@@ -287,9 +363,10 @@ function init(client) {
     const guild = client.guilds.cache.get(GUILD_ID());
     if (!guild) return console.error('[niveaux] GUILD_ID introuvable : vérifie la variable GUILD_ID');
     await inv.init(guild);
-    if (ownRegistration) for (const d of [...DEFS, ...annonces.defs, ...avent.defs, ...moderation.defs, ...logs.defs, ...aide.defs, ...automod.defs, ...statut.defs, ...rappels.defs, ...scammers.defs]) await guild.commands.create(d.toJSON()).catch(() => {});
+    if (ownRegistration) for (const d of [...DEFS, ...annonces.defs, ...avent.defs, ...moderation.defs, ...logs.defs, ...aide.defs, ...automod.defs, ...scammers.defs]) await guild.commands.create(d.toJSON()).catch(() => {});
     levels.backupIfNeeded();
     console.log('[niveaux] 🏆 niveaux et bienvenue prêts');
+    console.log(announceId() ? `[niveaux] annonces de niveau dans le salon ${announceId()}` : '[niveaux] ⚠️ aucun salon d’annonces de niveau : tape /annonces-niveaux salon (ou !niveaux-ici dans le salon voulu)');
   };
   if (client.isReady()) start(); else client.once(Events.ClientReady, start);
 }
